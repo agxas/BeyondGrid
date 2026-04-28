@@ -1,6 +1,5 @@
 yfinance>=0.2.54
-streamlit==1.33.0
-pandas==2.2.2
-plotly==5.22.0
-supabase==2.4.0
-python-dotenv==1.0.1
+streamlit
+pandas
+plotly
+supabase
