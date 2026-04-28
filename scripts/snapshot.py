@@ -101,7 +101,13 @@ def compute_snapshot(
         return None
 
     # Liquidités disponibles
-    cash = sum(float(t["total_amount"]) for t in acc_txns)
+    cash_raw = sum(float(t["total_amount"]) for t in acc_txns)
+    if cash_raw < 0:
+        log.warning(
+            f"  Compte {account_id} : cash calculé négatif ({cash_raw:.2f} €) — "
+            "probable incohérence dans les transactions historiques. Corrigé à 0."
+        )
+    cash = max(0.0, cash_raw)
 
     # Capital net investi (hors rendement)
     invested_capital = sum(
