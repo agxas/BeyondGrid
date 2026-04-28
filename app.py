@@ -8,163 +8,182 @@ import plotly.express as px
 # CONFIG
 # =========================
 
-st.set_page_config(
-    page_title="Portfolio Dashboard",
-    layout="wide"
-)
-
+st.set_page_config(layout="wide")
 st.title("📊 Portfolio Dashboard")
 
 # =========================
-# DB CONNECTION
+# DB
 # =========================
 
 @st.cache_resource
 def init_db():
-    url = os.environ["SUPABASE_URL"]
-    key = os.environ["SUPABASE_KEY"]
-    return create_client(url, key)
+    return create_client(
+        os.environ["SUPABASE_URL"],
+        os.environ["SUPABASE_KEY"]
+    )
 
 supabase = init_db()
 
 # =========================
-# DATA LOADING
+# LOAD DATA
 # =========================
 
 @st.cache_data(ttl=3600)
-def load_data():
+def load_all():
     snapshots = supabase.table("snapshots").select("*").execute().data
+    assets = supabase.table("assets").select("*").execute().data
+    transactions = supabase.table("transactions").select("*").execute().data
     settings = supabase.table("settings").select("*").single().execute().data
 
-    df = pd.DataFrame(snapshots)
-    df["date"] = pd.to_datetime(df["date"])
+    return (
+        pd.DataFrame(snapshots),
+        pd.DataFrame(assets),
+        pd.DataFrame(transactions),
+        settings
+    )
 
-    return df, settings
+snapshots, assets, transactions, settings = load_all()
 
-df, settings = load_data()
+snapshots["date"] = pd.to_datetime(snapshots["date"])
 
 # =========================
-# PREP DATA
+# SIDEBAR
 # =========================
 
-df_grouped = df.groupby("date").agg({
+page = st.sidebar.radio(
+    "Navigation",
+    ["Overview", "Performance", "Allocation", "Dividendes", "Rééquilibrage"]
+)
+
+# =========================
+# COMMON PREP
+# =========================
+
+df = snapshots.groupby("date").agg({
     "total_value": "sum",
     "invested_capital": "sum"
 }).reset_index()
 
-df_grouped = df_grouped.sort_values("date")
+df = df.sort_values("date")
+df["returns"] = df["total_value"].pct_change()
+df["cummax"] = df["total_value"].cummax()
+df["drawdown"] = (df["total_value"] - df["cummax"]) / df["cummax"]
 
-# returns
-df_grouped["returns"] = df_grouped["total_value"].pct_change()
+latest = df.iloc[-1]
 
-# drawdown
-df_grouped["cummax"] = df_grouped["total_value"].cummax()
-df_grouped["drawdown"] = (df_grouped["total_value"] - df_grouped["cummax"]) / df_grouped["cummax"]
-
-# =========================
-# METRICS
-# =========================
-
-latest = df_grouped.iloc[-1]
-
-total_value = latest["total_value"]
+total = latest["total_value"]
 invested = latest["invested_capital"]
 
-fire_target = settings.get("fire_target_amount") or 1
-monthly_income = settings.get("monthly_income") or 0
-livret_rate = settings.get("livret_a_rate") or 0.03
-
-# KPIs
-performance = (total_value / invested - 1) if invested > 0 else 0
-fire_progress = total_value / fire_target if fire_target > 0 else 0
-passive_income = total_value * 0.04 / 12
-
-# Sharpe (approx annualisé)
-returns = df_grouped["returns"].dropna()
-volatility = returns.std() * (252 ** 0.5)
-
-if volatility > 0:
-    sharpe = (returns.mean() * 252 - livret_rate) / volatility
-else:
-    sharpe = 0
-
-max_drawdown = df_grouped["drawdown"].min()
-
 # =========================
-# KPI DISPLAY
+# OVERVIEW
 # =========================
 
-col1, col2, col3, col4 = st.columns(4)
+if page == "Overview":
 
-col1.metric("Net Worth", f"{total_value:,.0f} €")
-col2.metric("Performance", f"{performance:.1%}")
-col3.metric("FIRE Progress", f"{fire_progress:.1%}")
-col4.metric("Passive Income", f"{passive_income:,.0f} €/mo")
+    fire_target = settings.get("fire_target_amount") or 1
+    monthly_dca = settings.get("monthly_dca") or 0
 
-col5, col6 = st.columns(2)
-col5.metric("Sharpe Ratio", f"{sharpe:.2f}")
-col6.metric("Max Drawdown", f"{max_drawdown:.1%}")
+    performance = total / invested - 1 if invested else 0
+    fire_progress = total / fire_target
+    passive_income = total * 0.04 / 12
 
-st.divider()
+    col1, col2, col3, col4 = st.columns(4)
 
-# =========================
-# GRAPH - VALUE
-# =========================
+    col1.metric("Net Worth", f"{total:,.0f}€")
+    col2.metric("Performance", f"{performance:.1%}")
+    col3.metric("FIRE", f"{fire_progress:.1%}")
+    col4.metric("Passive Income", f"{passive_income:,.0f}€/mo")
 
-fig_value = px.line(
-    df_grouped,
-    x="date",
-    y=["total_value", "invested_capital"],
-    title="Portfolio Value vs Invested"
-)
-
-st.plotly_chart(fig_value, use_container_width=True)
+    st.plotly_chart(px.line(df, x="date", y=["total_value", "invested_capital"]))
 
 # =========================
-# GRAPH - DRAWDOWN
+# PERFORMANCE
 # =========================
 
-fig_dd = px.line(
-    df_grouped,
-    x="date",
-    y="drawdown",
-    title="Drawdown"
-)
+elif page == "Performance":
 
-st.plotly_chart(fig_dd, use_container_width=True)
+    livret = settings.get("livret_a_rate") or 0.03
+
+    returns = df["returns"].dropna()
+    vol = returns.std() * (252 ** 0.5)
+
+    sharpe = (returns.mean() * 252 - livret) / vol if vol else 0
+
+    st.metric("Sharpe Ratio", f"{sharpe:.2f}")
+    st.metric("Max Drawdown", f"{df['drawdown'].min():.1%}")
+
+    st.plotly_chart(px.line(df, x="date", y="drawdown"))
+
+    # ===== BENCHMARK =====
+    benchmark_assets = assets[assets["is_benchmark"] == True]
+
+    if not benchmark_assets.empty:
+        st.subheader("Benchmark comparison")
+
+        # ⚠️ simplifié (tu pourras améliorer avec yfinance)
+        benchmark_value = df["invested_capital"] * (1 + 0.07)  # fake placeholder
+
+        df["benchmark"] = benchmark_value
+
+        st.plotly_chart(
+            px.line(df, x="date", y=["total_value", "benchmark"])
+        )
 
 # =========================
-# SIMPLE FORECAST (DCA)
+# ALLOCATION
 # =========================
 
-st.divider()
-st.subheader("📈 Projection")
+elif page == "Allocation":
 
-monthly_dca = settings.get("monthly_dca") or 0
-annual_return = settings.get("estimated_annual_return") or 0.07
+    merged = transactions.merge(assets, left_on="asset_id", right_on="id")
 
-years = st.slider("Projection (years)", 1, 30, 10)
+    allocation = merged.groupby("asset_class")["total_amount"].sum().reset_index()
 
-months = years * 12
-monthly_return = (1 + annual_return) ** (1/12) - 1
+    st.plotly_chart(px.pie(allocation, names="asset_class", values="total_amount"))
 
-values = []
-value = total_value
+# =========================
+# DIVIDENDES
+# =========================
 
-for i in range(months):
-    value = value * (1 + monthly_return) + monthly_dca
-    values.append(value)
+elif page == "Dividendes":
 
-future_df = pd.DataFrame({
-    "month": range(months),
-    "value": values
-})
+    divs = transactions[transactions["type"] == "dividend"]
 
-fig_forecast = px.line(
-    future_df,
-    x="month",
-    y="value",
-    title="Projection avec DCA"
-)
+    if not divs.empty:
+        divs["date"] = pd.to_datetime(divs["date"])
 
-st.plotly_chart(fig_forecast, use_container_width=True)
+        monthly = divs.groupby(divs["date"].dt.to_period("M"))["total_amount"].sum()
+
+        st.metric("Total Dividendes", f"{divs['total_amount'].sum():,.0f}€")
+
+        st.plotly_chart(px.bar(monthly))
+
+# =========================
+# REBALANCING
+# =========================
+
+elif page == "Rééquilibrage":
+
+    st.subheader("Rééquilibrage DCA")
+
+    merged = transactions.merge(assets, left_on="asset_id", right_on="id")
+
+    current = merged.groupby("name")["total_amount"].sum().reset_index()
+
+    total_portfolio = current["total_amount"].sum()
+    current["weight"] = current["total_amount"] / total_portfolio
+
+    # ⚠️ exemple simple de target
+    targets = {
+        "ETF World": 0.7,
+        "ETF EM": 0.2,
+        "Small Cap": 0.1
+    }
+
+    current["target"] = current["name"].map(targets).fillna(0)
+    current["delta"] = current["target"] - current["weight"]
+
+    monthly_dca = settings.get("monthly_dca") or 0
+    current["suggested_buy"] = current["delta"] * monthly_dca
+
+    st.dataframe(current[["name", "weight", "target", "suggested_buy"]])
