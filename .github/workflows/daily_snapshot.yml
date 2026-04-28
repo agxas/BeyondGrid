@@ -1,0 +1,37 @@
+name: Daily Snapshot
+
+on:
+  schedule:
+    # Lundi–vendredi à 18h00 UTC
+    # = 20h00 Paris en été (CEST, UTC+2)
+    # = 19h00 Paris en hiver (CET, UTC+1)
+    # Les marchés européens ferment à 17h35 heure locale → toujours après clôture.
+    - cron: "0 18 * * 1-5"
+
+  # Permet de déclencher manuellement depuis l'onglet Actions de GitHub
+  workflow_dispatch:
+
+jobs:
+  snapshot:
+    name: Mise à jour prix + snapshot
+    runs-on: ubuntu-latest
+    timeout-minutes: 10          # Sécurité : coupe si le script hang
+
+    steps:
+      - name: Checkout du dépôt
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"            # Met en cache les dépendances entre les runs
+
+      - name: Installation des dépendances
+        run: pip install -r requirements.txt
+
+      - name: Exécution du snapshot
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/snapshot.py
