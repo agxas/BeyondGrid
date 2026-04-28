@@ -16,6 +16,8 @@ jobs:
     name: Mise à jour prix + snapshot
     runs-on: ubuntu-latest
     timeout-minutes: 10          # Sécurité : coupe si le script hang
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout du dépôt
