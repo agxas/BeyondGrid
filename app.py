@@ -13,6 +13,7 @@ import os
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+import plotly.graph_objects as go
 from supabase import create_client
 
 # ============================================================
@@ -199,6 +200,51 @@ def compute_fire(kpis: dict, settings: dict) -> dict:
         "freedom_days":           freedom_days,
     }
 
+def compute_perf_chart(df_snap: pd.DataFrame) -> go.Figure:
+    """
+    Graphique Valeur totale vs Capital investi.
+    Zone colorée entre les deux courbes = plus-value latente.
+    """
+    dates        = df_snap["date"]
+    total_value  = df_snap["total_value"]
+    invested     = df_snap["invested_capital"]
+
+    fig = go.Figure()
+
+    # Zone remplie entre les deux courbes
+    # On fait d'abord la courbe du bas (capital investi) en "fill to next y"
+    fig.add_trace(go.Scatter(
+        x=dates, y=invested,
+        name="Capital investi",
+        line=dict(color="#888888", width=2, dash="dot"),
+        fill=None,
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=dates, y=total_value,
+        name="Valeur totale",
+        line=dict(color="#4C9BE8", width=2.5),
+        fill="tonexty",  # remplissage vers la courbe précédente
+        fillcolor="rgba(76, 155, 232, 0.15)",
+    ))
+
+    fig.update_layout(
+        height=400,
+        margin=dict(l=0, r=0, t=30, b=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        hovermode="x unified",
+        xaxis=dict(showgrid=False),
+        yaxis=dict(
+            ticksuffix=" €",
+            tickformat=",.0f",
+            gridcolor="#f0f0f0",
+        ),
+        plot_bgcolor="white",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+
+    return fig
+
 
 # ============================================================
 # 4. PAGES
@@ -272,7 +318,32 @@ def page_vue_globale():
     else:
         col_f3.info("Définis ton revenu mensuel pour ce calcul.")
 
-    # (graphiques à venir — Étape 3)
+    # ── Graphique valeur vs capital ────────────────────────────
+    st.subheader("📈 Évolution du patrimoine")
+
+    # Filtre de période
+    col_period, _ = st.columns([2, 5])
+    with col_period:
+        periode = st.selectbox(
+            "Période",
+            options=["1 mois", "3 mois", "6 mois", "1 an", "Tout"],
+            index=4,
+            label_visibility="collapsed",
+        )
+
+    # Filtrage du DataFrame selon la période choisie
+    today = df_snap["date"].max()
+    periode_map = {
+        "1 mois":  today - pd.DateOffset(months=1),
+        "3 mois":  today - pd.DateOffset(months=3),
+        "6 mois":  today - pd.DateOffset(months=6),
+        "1 an":    today - pd.DateOffset(years=1),
+        "Tout":    df_snap["date"].min(),
+    }
+    df_filtered = df_snap[df_snap["date"] >= periode_map[periode]]
+
+    fig = compute_perf_chart(df_filtered)
+    st.plotly_chart(fig, use_container_width=True)
     st.divider()
     st.caption(
         f"Dernière donnée : {df_snap.iloc[-1]['date'].strftime('%d/%m/%Y')} "
