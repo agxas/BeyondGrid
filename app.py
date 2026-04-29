@@ -419,6 +419,109 @@ def compute_livret_a_comparison(
 
     return fig, perf_portef, perf_livret, ecart
 
+def compute_benchmark_comparison(
+    df_snap: pd.DataFrame,
+    benchmark_ticker: str,
+    benchmark_name: str,
+) -> tuple[go.Figure, float, float, float]:
+    """
+    Compare la performance relative du portefeuille vs un benchmark.
+    Les deux courbes sont rebasées à 100% au point de départ.
+    Retourne (figure, perf_portef_%, perf_bench_%, ecart_%).
+    """
+    df     = df_snap.copy().reset_index(drop=True)
+    dates  = df["date"]
+    values = df["total_value"].astype(float)
+
+    # Portefeuille rebasé à 100
+    portef_rebased = (values / values.iloc[0]) * 100
+
+    # Benchmark via yfinance (rebasé à 1.0 → on multiplie par 100)
+    start_str = dates.iloc[0].strftime("%Y-%m-%d")
+    end_str   = dates.iloc[-1].strftime("%Y-%m-%d")
+
+    bench_series = fetch_benchmark_history(benchmark_ticker, start_str, end_str)
+
+    # Performances finales
+    perf_portef = float(portef_rebased.iloc[-1] - 100)
+
+    fig = go.Figure()
+
+    # Courbe portefeuille
+    fig.add_trace(go.Scatter(
+        x=dates,
+        y=portef_rebased,
+        name="Mon portefeuille",
+        line=dict(color="#4C9BE8", width=2.5),
+        hovertemplate="%{y:.1f}%<extra>Portefeuille</extra>",
+    ))
+
+    # Zone neutre à 100%
+    fig.add_hline(
+        y=100,
+        line_dash="dot",
+        line_color="#cccccc",
+        line_width=1,
+    )
+
+    if not bench_series.empty:
+        # Aligner le benchmark sur les dates du portefeuille
+        bench_rebased = bench_series * 100
+        bench_rebased = bench_rebased.reindex(
+            pd.DatetimeIndex(dates), method="ffill"
+        )
+
+        perf_bench = float(bench_rebased.iloc[-1] - 100)
+        ecart      = perf_portef - perf_bench
+        ecart_color = "#2ECC71" if ecart >= 0 else "#E84C4C"
+        ecart_signe = "+" if ecart >= 0 else ""
+
+        fig.add_trace(go.Scatter(
+            x=dates,
+            y=bench_rebased.values,
+            name=benchmark_name,
+            line=dict(color="#9B59B6", width=2, dash="dash"),
+            hovertemplate="%{y:.1f}%<extra>" + benchmark_name + "</extra>",
+        ))
+
+        # Annotation écart final
+        fig.add_annotation(
+            x=dates.iloc[-1],
+            y=portef_rebased.iloc[-1],
+            text=f"  {ecart_signe}{ecart:.1f} % vs benchmark",
+            showarrow=False,
+            xanchor="left",
+            font=dict(color=ecart_color, size=13),
+        )
+
+    else:
+        perf_bench = None
+        ecart      = None
+        fig.add_annotation(
+            x=dates.iloc[len(dates)//2],
+            y=portef_rebased.mean(),
+            text="⚠️ Données benchmark indisponibles",
+            showarrow=False,
+            font=dict(color="#888888", size=12),
+        )
+
+    fig.update_layout(
+        height=380,
+        margin=dict(l=0, r=100, t=20, b=0),
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        xaxis=dict(showgrid=False),
+        yaxis=dict(
+            ticksuffix=" %",
+            tickformat=".0f",
+            gridcolor="#f0f0f0",
+        ),
+        plot_bgcolor="white",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+
+    return fig, perf_portef, perf_bench, ecart
+
 # ============================================================
 # 4. PAGES
 # ============================================================
@@ -670,7 +773,74 @@ def page_analyses():
 
     st.plotly_chart(fig_la, use_container_width=True)
 
-    # (4c Benchmark à venir)
+    # ── 4c : Performance vs Benchmark ─────────────────────────
+    st.subheader("🏁 Portefeuille vs Benchmark")
+
+    # Sélection du benchmark parmi les assets marqués is_benchmark
+    df_assets = fetch_assets()
+    df_benchmarks = df_assets[
+        df_assets["is_benchmark"] == True
+    ][["name", "yahoo_ticker"]].dropna(subset=["yahoo_ticker"])
+
+    if df_benchmarks.empty:
+        st.info(
+            "Aucun benchmark configuré. "
+            "Dans ta table `assets`, passe `is_benchmark = TRUE` "
+            "sur un ETF (ex: IWDA.AS pour MSCI World)."
+        )
+    else:
+        # Sélecteur si plusieurs benchmarks disponibles
+        if len(df_benchmarks) == 1:
+            selected = df_benchmarks.iloc[0]
+        else:
+            bench_choice = st.selectbox(
+                "Benchmark",
+                options=df_benchmarks["name"].tolist(),
+            )
+            selected = df_benchmarks[
+                df_benchmarks["name"] == bench_choice
+            ].iloc[0]
+
+        with st.spinner(f"Chargement de {selected['name']}..."):
+            fig_bench, perf_portef, perf_bench, ecart = (
+                compute_benchmark_comparison(
+                    df_filtered,
+                    selected["yahoo_ticker"],
+                    selected["name"],
+                )
+            )
+
+        # Métriques
+        col1, col2, col3 = st.columns(3)
+
+        col1.metric(
+            "Performance portefeuille",
+            f"{perf_portef:+.2f} %",
+        )
+
+        if perf_bench is not None:
+            col2.metric(
+                f"Performance {selected['name']}",
+                f"{perf_bench:+.2f} %",
+                delta_color="off",
+            )
+            col3.metric(
+                "Alpha généré",
+                f"{ecart:+.2f} %",
+                "✅ Tu bats le benchmark" if ecart >= 0 else "⚠️ Sous le benchmark",
+                delta_color="off",
+            )
+        else:
+            col2.warning("Données benchmark indisponibles")
+
+        st.plotly_chart(fig_bench, use_container_width=True)
+
+    st.divider()
+    st.caption(
+        f"Analyse sur {len(df_filtered)} jours · "
+        f"du {df_filtered.iloc[0]['date'].strftime('%d/%m/%Y')} "
+        f"au {df_filtered.iloc[-1]['date'].strftime('%d/%m/%Y')}"
+    )
     st.divider()
     st.caption(f"Analyse sur {len(df_filtered)} jours · "
                f"du {df_filtered.iloc[0]['date'].strftime('%d/%m/%Y')} "
