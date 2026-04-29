@@ -347,6 +347,78 @@ def compute_sharpe(df_snap: pd.DataFrame, risk_free_rate: float) -> float:
 
     return float(sharpe_annualized)
 
+def compute_livret_a_comparison(
+    df_snap: pd.DataFrame,
+    livret_a_rate: float,
+) -> go.Figure:
+    """
+    Compare la valeur totale du portefeuille à un placement
+    équivalent sur Livret A, partant du même capital initial.
+    """
+    df = df_snap.copy().reset_index(drop=True)
+    dates         = df["date"]
+    values        = df["total_value"].astype(float)
+    start_value   = values.iloc[0]
+
+    # Courbe Livret A : croissance journalière composée
+    daily_rate = (1 + livret_a_rate) ** (1 / 365) - 1
+    n_days     = (dates - dates.iloc[0]).dt.days
+    livret_a   = start_value * (1 + daily_rate) ** n_days
+
+    # Performance finale de chaque courbe
+    perf_portef  = (values.iloc[-1] / start_value - 1) * 100
+    perf_livret  = (livret_a.iloc[-1] / start_value - 1) * 100
+    ecart        = perf_portef - perf_livret
+
+    fig = go.Figure()
+
+    # Courbe portefeuille
+    fig.add_trace(go.Scatter(
+        x=dates,
+        y=values,
+        name="Mon portefeuille",
+        line=dict(color="#4C9BE8", width=2.5),
+        hovertemplate="%{y:,.0f} €<extra>Portefeuille</extra>",
+    ))
+
+    # Courbe Livret A
+    fig.add_trace(go.Scatter(
+        x=dates,
+        y=livret_a,
+        name=f"Livret A ({livret_a_rate * 100:.1f} %)",
+        line=dict(color="#F5A623", width=2, dash="dash"),
+        hovertemplate="%{y:,.0f} €<extra>Livret A</extra>",
+    ))
+
+    # Annotation de l'écart final
+    ecart_color = "#2ECC71" if ecart >= 0 else "#E84C4C"
+    ecart_signe = "+" if ecart >= 0 else ""
+    fig.add_annotation(
+        x=dates.iloc[-1],
+        y=values.iloc[-1],
+        text=f"  {ecart_signe}{ecart:.1f} % vs Livret A",
+        showarrow=False,
+        xanchor="left",
+        font=dict(color=ecart_color, size=13),
+    )
+
+    fig.update_layout(
+        height=380,
+        margin=dict(l=0, r=80, t=20, b=0),
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        xaxis=dict(showgrid=False),
+        yaxis=dict(
+            ticksuffix=" €",
+            tickformat=",.0f",
+            gridcolor="#f0f0f0",
+        ),
+        plot_bgcolor="white",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+
+    return fig, perf_portef, perf_livret, ecart
+
 # ============================================================
 # 4. PAGES
 # ============================================================
@@ -569,7 +641,36 @@ def page_analyses():
         *Le taux sans risque utilisé est le Livret A, paramétrable dans Saisie manuelle.*
         """)
 
-    # (4b Livret A et 4c Benchmark à venir)
+   # ── 4b : Performance vs Livret A ──────────────────────────
+    st.subheader("🏦 Portefeuille vs Livret A")
+
+    fig_la, perf_portef, perf_livret, ecart = compute_livret_a_comparison(
+        df_filtered, risk_free_rate
+    )
+
+    # Métriques de synthèse au-dessus du graphique
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric(
+        "Performance portefeuille",
+        f"{perf_portef:+.2f} %",
+        delta_color="normal",
+    )
+    col2.metric(
+        f"Performance Livret A ({risk_free_rate*100:.1f} %)",
+        f"{perf_livret:+.2f} %",
+        delta_color="off",
+    )
+    col3.metric(
+        "Écart (alpha vs Livret A)",
+        f"{ecart:+.2f} %",
+        "✅ Tu bats le Livret A" if ecart >= 0 else "⚠️ Sous le Livret A",
+        delta_color="off",
+    )
+
+    st.plotly_chart(fig_la, use_container_width=True)
+
+    # (4c Benchmark à venir)
     st.divider()
     st.caption(f"Analyse sur {len(df_filtered)} jours · "
                f"du {df_filtered.iloc[0]['date'].strftime('%d/%m/%Y')} "
