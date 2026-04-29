@@ -836,61 +836,95 @@ def page_analyses():
 
    # ── 5 : Projection DCA ─────────────────────────
     st.subheader("📈 Projection DCA")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        years = st.slider(
+            "Durée projection (années)",
+            min_value=1,
+            max_value=30,
+            value=10
+        )
+    
+    with col2:
+        monthly_dca_input = st.number_input(
+            "DCA mensuel (€)",
+            min_value=0,
+            value=int(settings.get("monthly_dca") or 0),
+            step=50
+        )
+
+    months = years * 12
     
     if not df_filtered.empty:
-    
-        latest_value = df_filtered.sort_values("date")["total_value"].iloc[-1]
-    
-        monthly_dca = float(settings.get("monthly_dca") or 0)
-        annual_return = float(settings.get("estimated_annual_return") or 0.07)
-        inflation_rate = float(settings.get("inflation_rate") or 0.02)
-    
-        if monthly_dca == 0:
-            st.info("Définis un DCA mensuel dans les settings pour activer la projection.")
-        else:
-            dca_df = compute_dca_projection(
-                current_value=latest_value,
-                monthly_dca=monthly_dca,
-                annual_return=annual_return,
-                inflation_rate=inflation_rate,
-                months=120
-            )
-    
-            fig = go.Figure()
-    
-            fig.add_trace(go.Scatter(
-                x=dca_df["date"],
-                y=dca_df["invested"],
-                name="Capital investi",
-                line=dict(dash="dot")
-            ))
-    
-            fig.add_trace(go.Scatter(
-                x=dca_df["date"],
-                y=dca_df["portfolio"],
-                name="Valeur portefeuille"
-            ))
-    
-            fig.add_trace(go.Scatter(
-                x=dca_df["date"],
-                y=dca_df["inflation_adjusted"],
-                name="Valeur réelle (inflation)",
-                line=dict(dash="dash")
-            ))
-    
-            fig.update_layout(
-                height=400,
-                margin=dict(l=0, r=0, t=30, b=0),
-                hovermode="x unified",
-                xaxis=dict(showgrid=False),
-                yaxis=dict(ticksuffix=" €", tickformat=",.0f"),
-                legend=dict(orientation="h"),
-                plot_bgcolor="white",
-                paper_bgcolor="rgba(0,0,0,0)",
-            )
-    
-            st.plotly_chart(fig, use_container_width=True)
 
+    latest_value = df_filtered.sort_values("date")["total_value"].iloc[-1]
+
+    monthly_dca = float(monthly_dca_input)
+    annual_return = float(settings.get("estimated_annual_return") or 0.07)
+    inflation_rate = float(settings.get("inflation_rate") or 0.02)
+
+    if monthly_dca == 0:
+        st.info("Définis un DCA mensuel pour activer la projection.")
+    else:
+        dca_df = compute_dca_projection(
+            current_value=latest_value,
+            monthly_dca=monthly_dca,
+            annual_return=annual_return,
+            inflation_rate=inflation_rate,
+            months=months
+        )
+
+        fig = go.Figure()
+
+        fig.add_trace(go.Scatter(
+            x=dca_df["date"],
+            y=dca_df["invested"],
+            name="Capital investi",
+            line=dict(color="#888888", width=2, dash="dot"),
+        ))
+
+        fig.add_trace(go.Scatter(
+            x=dca_df["date"],
+            y=dca_df["portfolio"],
+            name="Valeur portefeuille",
+            line=dict(color="#4C9BE8", width=2.5),
+            fill="tonexty",
+            fillcolor="rgba(76, 155, 232, 0.15)",
+        ))
+
+        fig.add_trace(go.Scatter(
+            x=dca_df["date"],
+            y=dca_df["inflation_adjusted"],
+            name="Valeur réelle",
+            line=dict(color="#2ECC71", width=2, dash="dash"),
+        ))
+
+        fig.update_layout(
+            height=400,
+            margin=dict(l=0, r=0, t=30, b=0),
+            hovermode="x unified",
+            xaxis=dict(showgrid=False),
+            yaxis=dict(ticksuffix=" €", tickformat=",.0f", gridcolor="#f0f0f0"),
+            legend=dict(orientation="h", y=1.02),
+            plot_bgcolor="white",
+            paper_bgcolor="rgba(0,0,0,0)",
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        # KPIs projection
+        final_value = dca_df["portfolio"].iloc[-1]
+        total_invested = dca_df["invested"].iloc[-1]
+        gain = final_value - total_invested
+
+        col1, col2, col3 = st.columns(3)
+
+        col1.metric("Capital final", f"{final_value:,.0f} €".replace(",", " "))
+        col2.metric("Total investi", f"{total_invested:,.0f} €".replace(",", " "))
+        col3.metric("Gain", f"{gain:,.0f} €".replace(",", " "))
+        
     # FIX : un seul pied de page (suppression du doublon)
     st.divider()
     st.caption(
