@@ -491,6 +491,55 @@ def compute_benchmark_comparison(
 
     return fig, perf_portef, perf_bench, ecart
 
+def compute_dca_projection(
+    current_value,
+    monthly_dca,
+    annual_return,
+    inflation_rate,
+    months=120
+):
+    import pandas as pd
+    from datetime import datetime
+    from dateutil.relativedelta import relativedelta
+
+    dates = []
+    invested = []
+    portfolio = []
+    inflation_adjusted = []
+
+    value = current_value
+    total_invested = current_value  # point de départ
+
+    monthly_return = (1 + annual_return) ** (1/12) - 1
+    monthly_inflation = (1 + inflation_rate) ** (1/12) - 1
+
+    current_date = datetime.today()
+
+    for i in range(months):
+        current_date += relativedelta(months=1)
+
+        # DCA
+        total_invested += monthly_dca
+
+        # croissance portefeuille
+        value = (value + monthly_dca) * (1 + monthly_return)
+
+        # ajustement inflation
+        inflation_factor = (1 + monthly_inflation) ** (i + 1)
+        real_value = value / inflation_factor
+
+        dates.append(current_date)
+        invested.append(total_invested)
+        portfolio.append(value)
+        inflation_adjusted.append(real_value)
+
+    return pd.DataFrame({
+        "date": dates,
+        "invested": invested,
+        "portfolio": portfolio,
+        "inflation_adjusted": inflation_adjusted
+    })
+
 
 # ============================================================
 # 4. PAGES
@@ -784,6 +833,55 @@ def page_analyses():
             col2.warning("Données benchmark indisponibles")
 
         st.plotly_chart(fig_bench, use_container_width=True)
+
+    # ── 5 : Projection DCA ─────────────────────────
+    st.subheader("📈 Projection DCA")
+    
+    settings = fetch_settings()
+    snapshots = fetch_snapshots()
+    
+    if not snapshots.empty:
+        latest_value = snapshots.sort_values("date")["total_value"].iloc[-1]
+    
+        dca_df = compute_dca_projection(
+            current_value=latest_value,
+            monthly_dca=settings["monthly_dca"],
+            annual_return=settings["estimated_annual_return"],
+            inflation_rate=settings["inflation_rate"],
+            months=120
+        )
+    
+        import plotly.graph_objects as go
+    
+        fig = go.Figure()
+    
+        fig.add_trace(go.Scatter(
+            x=dca_df["date"],
+            y=dca_df["invested"],
+            name="Capital investi",
+            line=dict(dash="dot")
+        ))
+    
+        fig.add_trace(go.Scatter(
+            x=dca_df["date"],
+            y=dca_df["portfolio"],
+            name="Valeur portefeuille"
+        ))
+    
+        fig.add_trace(go.Scatter(
+            x=dca_df["date"],
+            y=dca_df["inflation_adjusted"],
+            name="Valeur réelle (inflation)",
+            line=dict(dash="dash")
+        ))
+    
+        fig.update_layout(
+            title="Projection DCA sur 10 ans",
+            xaxis_title="Date",
+            yaxis_title="Valeur (€)"
+        )
+    
+        st.plotly_chart(fig, use_container_width=True)
 
     # FIX : un seul pied de page (suppression du doublon)
     st.divider()
