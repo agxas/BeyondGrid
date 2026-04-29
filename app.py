@@ -46,7 +46,7 @@ def fetch_snapshots_agg() -> pd.DataFrame:
     Snapshots agrégés par date (somme de tous les comptes).
     Retourne un DataFrame avec colonnes :
       date | total_value | invested_capital | cash
-    Trié par date ASC, index = date (datetime).
+    Trié par date ASC.
     """
     res = supabase.table("snapshots").select(
         "date, total_value, invested_capital, cash"
@@ -58,7 +58,6 @@ def fetch_snapshots_agg() -> pd.DataFrame:
     df = pd.DataFrame(res.data)
     df["date"] = pd.to_datetime(df["date"])
 
-    # Agrégation : somme de tous les comptes pour chaque date
     df = (
         df.groupby("date")[["total_value", "invested_capital", "cash"]]
         .sum()
@@ -122,17 +121,32 @@ def fetch_transactions() -> pd.DataFrame:
     return df
 
 
+# FIX BENCHMARK : +5j de marge + strip timezone
 @st.cache_data(ttl=3600)
 def fetch_benchmark_history(ticker: str, start: str, end: str) -> pd.Series:
     """
     Récupère l'historique de prix d'un benchmark via yfinance.
     Rebasé à 1.0 au point de départ pour comparaison de perf.
+    Ajoute 5 jours de marge sur end pour couvrir weekends/jours fériés.
     """
     try:
-        hist = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
+        end_extended = (
+            pd.to_datetime(end) + pd.Timedelta(days=5)
+        ).strftime("%Y-%m-%d")
+
+        hist = yf.download(
+            ticker, start=start, end=end_extended,
+            progress=False, auto_adjust=True
+        )
         if hist.empty:
             return pd.Series(dtype=float)
+
         prices = hist["Close"].squeeze()
+
+        # Strip timezone pour compatibilité avec nos dates timezone-naive
+        if prices.index.tz is not None:
+            prices.index = prices.index.tz_localize(None)
+
         return prices / prices.iloc[0]  # rebasé à 1.0
     except Exception:
         return pd.Series(dtype=float)
@@ -145,7 +159,6 @@ def fetch_benchmark_history(ticker: str, start: str, end: str) -> pd.Series:
 def compute_kpis(df_snap: pd.DataFrame) -> dict:
     """
     KPIs de base à partir des snapshots agrégés.
-    Nécessite au moins une ligne dans df_snap.
     """
     latest = df_snap.iloc[-1]
     total_value      = float(latest["total_value"])
@@ -154,7 +167,6 @@ def compute_kpis(df_snap: pd.DataFrame) -> dict:
     plus_value       = total_value - invested_capital
     perf_pct         = (plus_value / invested_capital * 100) if invested_capital > 0 else 0.0
 
-    # Performance depuis le début (première snapshot)
     first = df_snap.iloc[0]
     perf_since_start = (
         (float(latest["total_value"]) / float(first["total_value"]) - 1) * 100
@@ -176,21 +188,15 @@ def compute_fire(kpis: dict, settings: dict) -> dict:
     Indicateurs FIRE à partir des KPIs et des settings.
     Règle des 4% (Safe Withdrawal Rate).
     """
-    total_value  = kpis["total_value"]
-    fire_target  = settings.get("fire_target_amount") or 0
+    total_value    = kpis["total_value"]
+    fire_target    = settings.get("fire_target_amount") or 0
     monthly_income = settings.get("monthly_income") or 0
 
-    # Revenu passif théorique annuel (règle des 4%)
-    passive_income_annual = total_value * 0.04
+    passive_income_annual  = total_value * 0.04
     passive_income_monthly = passive_income_annual / 12
-
-    # % d'atteinte de l'objectif FIRE
-    fire_pct = (total_value / fire_target * 100) if fire_target > 0 else 0.0
-
-    # Jours de liberté financière
-    # = combien de jours on pourrait vivre avec le patrimoine actuel (sans rendement)
-    daily_expense = (monthly_income / 30) if monthly_income > 0 else None
-    freedom_days  = (total_value / daily_expense) if daily_expense else None
+    fire_pct               = (total_value / fire_target * 100) if fire_target > 0 else 0.0
+    daily_expense          = (monthly_income / 30) if monthly_income > 0 else None
+    freedom_days           = (total_value / daily_expense) if daily_expense else None
 
     return {
         "passive_income_annual":  passive_income_annual,
@@ -200,19 +206,18 @@ def compute_fire(kpis: dict, settings: dict) -> dict:
         "freedom_days":           freedom_days,
     }
 
+
 def compute_perf_chart(df_snap: pd.DataFrame) -> go.Figure:
     """
     Graphique Valeur totale vs Capital investi.
     Zone colorée entre les deux courbes = plus-value latente.
     """
-    dates        = df_snap["date"]
-    total_value  = df_snap["total_value"]
-    invested     = df_snap["invested_capital"]
+    dates       = df_snap["date"]
+    total_value = df_snap["total_value"]
+    invested    = df_snap["invested_capital"]
 
     fig = go.Figure()
 
-    # Zone remplie entre les deux courbes
-    # On fait d'abord la courbe du bas (capital investi) en "fill to next y"
     fig.add_trace(go.Scatter(
         x=dates, y=invested,
         name="Capital investi",
@@ -224,7 +229,7 @@ def compute_perf_chart(df_snap: pd.DataFrame) -> go.Figure:
         x=dates, y=total_value,
         name="Valeur totale",
         line=dict(color="#4C9BE8", width=2.5),
-        fill="tonexty",  # remplissage vers la courbe précédente
+        fill="tonexty",
         fillcolor="rgba(76, 155, 232, 0.15)",
     ))
 
@@ -234,30 +239,24 @@ def compute_perf_chart(df_snap: pd.DataFrame) -> go.Figure:
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         hovermode="x unified",
         xaxis=dict(showgrid=False),
-        yaxis=dict(
-            ticksuffix=" €",
-            tickformat=",.0f",
-            gridcolor="#f0f0f0",
-        ),
+        yaxis=dict(ticksuffix=" €", tickformat=",.0f", gridcolor="#f0f0f0"),
         plot_bgcolor="white",
         paper_bgcolor="rgba(0,0,0,0)",
     )
 
     return fig
 
+
 def compute_drawdown(df_snap: pd.DataFrame) -> tuple[go.Figure, float]:
     """
     Calcule et trace le drawdown depuis le plus haut historique.
     Retourne (figure, drawdown_max_en_pct).
     """
-    values = df_snap["total_value"].astype(float)
-    dates  = df_snap["date"]
-
-    # Maximum glissant (peak)
+    values   = df_snap["total_value"].astype(float)
+    dates    = df_snap["date"]
     peak     = values.cummax()
-    drawdown = (values - peak) / peak * 100  # en %, toujours ≤ 0
-
-    max_dd = drawdown.min()  # le pire drawdown (valeur la plus négative)
+    drawdown = (values - peak) / peak * 100
+    max_dd   = drawdown.min()
 
     fig = go.Figure()
 
@@ -271,15 +270,8 @@ def compute_drawdown(df_snap: pd.DataFrame) -> tuple[go.Figure, float]:
         hovertemplate="%{y:.2f} %<extra></extra>",
     ))
 
-    # Ligne zéro pour référence visuelle
-    fig.add_hline(
-        y=0,
-        line_dash="dot",
-        line_color="#888888",
-        line_width=1,
-    )
+    fig.add_hline(y=0, line_dash="dot", line_color="#888888", line_width=1)
 
-    # Annotation du pire drawdown
     idx_max_dd = drawdown.idxmin()
     fig.add_annotation(
         x=dates.iloc[idx_max_dd],
@@ -298,105 +290,87 @@ def compute_drawdown(df_snap: pd.DataFrame) -> tuple[go.Figure, float]:
         hovermode="x unified",
         showlegend=False,
         xaxis=dict(showgrid=False),
-        yaxis=dict(
-            ticksuffix=" %",
-            tickformat=".1f",
-            gridcolor="#f0f0f0",
-        ),
+        yaxis=dict(ticksuffix=" %", tickformat=".1f", gridcolor="#f0f0f0"),
         plot_bgcolor="white",
         paper_bgcolor="rgba(0,0,0,0)",
     )
 
     return fig, max_dd
 
-def compute_volatility(df_snap: pd.DataFrame) -> float:
+
+# FIX SHARPE/VOLATILITÉ : retourne None si pas assez de données
+def compute_volatility(df_snap: pd.DataFrame) -> float | None:
     """
     Volatilité annualisée des rendements journaliers (en %).
-    Retourne 0.0 si pas assez de données.
+    Retourne None si pas assez de données (< 3 snapshots).
     """
-    if len(df_snap) < 2:
-        return 0.0
-
+    if len(df_snap) < 3:
+        return None
     returns = df_snap["total_value"].astype(float).pct_change().dropna()
-
-    if returns.empty:
-        return 0.0
-
-    return float(returns.std() * (252 ** 0.5) * 100)  # en %
+    if len(returns) < 2 or returns.std() == 0:
+        return None
+    return float(returns.std() * (252 ** 0.5) * 100)
 
 
-def compute_sharpe(df_snap: pd.DataFrame, risk_free_rate: float) -> float:
+def compute_sharpe(df_snap: pd.DataFrame, risk_free_rate: float) -> float | None:
     """
     Ratio de Sharpe annualisé.
-    risk_free_rate : taux annuel en décimal (ex: 0.03 pour 3%)
-    Retourne 0.0 si pas assez de données.
+    Retourne None si pas assez de données (< 3 snapshots).
     """
-    if len(df_snap) < 2:
-        return 0.0
-
+    if len(df_snap) < 3:
+        return None
     returns = df_snap["total_value"].astype(float).pct_change().dropna()
-
-    if returns.empty or returns.std() == 0:
-        return 0.0
-
-    # Taux journalier sans risque
-    daily_rf = risk_free_rate / 252
-
-    excess_returns     = returns - daily_rf
-    sharpe_annualized  = (excess_returns.mean() / returns.std()) * (252 ** 0.5)
-
+    if len(returns) < 2 or returns.std() == 0:
+        return None
+    daily_rf          = risk_free_rate / 252
+    excess_returns    = returns - daily_rf
+    sharpe_annualized = (excess_returns.mean() / returns.std()) * (252 ** 0.5)
     return float(sharpe_annualized)
+
 
 def compute_livret_a_comparison(
     df_snap: pd.DataFrame,
     livret_a_rate: float,
-) -> go.Figure:
+) -> tuple[go.Figure, float, float, float]:
     """
-    Compare la valeur totale du portefeuille à un placement
-    équivalent sur Livret A, partant du même capital initial.
+    Compare la valeur totale du portefeuille à un placement Livret A
+    équivalent, partant du même capital initial.
     """
-    df = df_snap.copy().reset_index(drop=True)
-    dates         = df["date"]
-    values        = df["total_value"].astype(float)
-    start_value   = values.iloc[0]
+    df          = df_snap.copy().reset_index(drop=True)
+    dates       = df["date"]
+    values      = df["total_value"].astype(float)
+    start_value = values.iloc[0]
 
-    # Courbe Livret A : croissance journalière composée
     daily_rate = (1 + livret_a_rate) ** (1 / 365) - 1
     n_days     = (dates - dates.iloc[0]).dt.days
     livret_a   = start_value * (1 + daily_rate) ** n_days
 
-    # Performance finale de chaque courbe
-    perf_portef  = (values.iloc[-1] / start_value - 1) * 100
-    perf_livret  = (livret_a.iloc[-1] / start_value - 1) * 100
-    ecart        = perf_portef - perf_livret
+    perf_portef = (values.iloc[-1] / start_value - 1) * 100
+    perf_livret = (livret_a.iloc[-1] / start_value - 1) * 100
+    ecart       = perf_portef - perf_livret
 
     fig = go.Figure()
 
-    # Courbe portefeuille
     fig.add_trace(go.Scatter(
-        x=dates,
-        y=values,
+        x=dates, y=values,
         name="Mon portefeuille",
         line=dict(color="#4C9BE8", width=2.5),
         hovertemplate="%{y:,.0f} €<extra>Portefeuille</extra>",
     ))
 
-    # Courbe Livret A
     fig.add_trace(go.Scatter(
-        x=dates,
-        y=livret_a,
+        x=dates, y=livret_a,
         name=f"Livret A ({livret_a_rate * 100:.1f} %)",
         line=dict(color="#F5A623", width=2, dash="dash"),
         hovertemplate="%{y:,.0f} €<extra>Livret A</extra>",
     ))
 
-    # Annotation de l'écart final
     ecart_color = "#2ECC71" if ecart >= 0 else "#E84C4C"
     ecart_signe = "+" if ecart >= 0 else ""
     fig.add_annotation(
         x=dates.iloc[-1],
         y=values.iloc[-1],
-        text=f"  {ecart_signe}{ecart:.1f} % vs Livret A",
+        text=f"  {ecart_signe}{ecart:.2f} % vs Livret A",
         showarrow=False,
         xanchor="left",
         font=dict(color=ecart_color, size=13),
@@ -408,46 +382,38 @@ def compute_livret_a_comparison(
         hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         xaxis=dict(showgrid=False),
-        yaxis=dict(
-            ticksuffix=" €",
-            tickformat=",.0f",
-            gridcolor="#f0f0f0",
-        ),
+        yaxis=dict(ticksuffix=" €", tickformat=",.0f", gridcolor="#f0f0f0"),
         plot_bgcolor="white",
         paper_bgcolor="rgba(0,0,0,0)",
     )
 
     return fig, perf_portef, perf_livret, ecart
 
+
+# FIX BENCHMARK : correction du reindex timezone-aware vs naive
 def compute_benchmark_comparison(
     df_snap: pd.DataFrame,
     benchmark_ticker: str,
     benchmark_name: str,
-) -> tuple[go.Figure, float, float, float]:
+) -> tuple[go.Figure, float, float | None, float | None]:
     """
     Compare la performance relative du portefeuille vs un benchmark.
     Les deux courbes sont rebasées à 100% au point de départ.
-    Retourne (figure, perf_portef_%, perf_bench_%, ecart_%).
     """
     df     = df_snap.copy().reset_index(drop=True)
     dates  = df["date"]
     values = df["total_value"].astype(float)
 
-    # Portefeuille rebasé à 100
     portef_rebased = (values / values.iloc[0]) * 100
+    perf_portef    = float(portef_rebased.iloc[-1] - 100)
 
-    # Benchmark via yfinance (rebasé à 1.0 → on multiplie par 100)
     start_str = dates.iloc[0].strftime("%Y-%m-%d")
     end_str   = dates.iloc[-1].strftime("%Y-%m-%d")
 
     bench_series = fetch_benchmark_history(benchmark_ticker, start_str, end_str)
 
-    # Performances finales
-    perf_portef = float(portef_rebased.iloc[-1] - 100)
-
     fig = go.Figure()
 
-    # Courbe portefeuille
     fig.add_trace(go.Scatter(
         x=dates,
         y=portef_rebased,
@@ -456,51 +422,58 @@ def compute_benchmark_comparison(
         hovertemplate="%{y:.1f}%<extra>Portefeuille</extra>",
     ))
 
-    # Zone neutre à 100%
-    fig.add_hline(
-        y=100,
-        line_dash="dot",
-        line_color="#cccccc",
-        line_width=1,
-    )
+    fig.add_hline(y=100, line_dash="dot", line_color="#cccccc", line_width=1)
+
+    perf_bench = None
+    ecart      = None
 
     if not bench_series.empty:
-        # Aligner le benchmark sur les dates du portefeuille
         bench_rebased = bench_series * 100
-        bench_rebased = bench_rebased.reindex(
-            pd.DatetimeIndex(dates), method="ffill"
-        )
 
-        perf_bench = float(bench_rebased.iloc[-1] - 100)
-        ecart      = perf_portef - perf_bench
-        ecart_color = "#2ECC71" if ecart >= 0 else "#E84C4C"
-        ecart_signe = "+" if ecart >= 0 else ""
+        # Strip timezone pour aligner avec nos dates timezone-naive
+        if bench_rebased.index.tz is not None:
+            bench_rebased.index = bench_rebased.index.tz_localize(None)
 
-        fig.add_trace(go.Scatter(
-            x=dates,
-            y=bench_rebased.values,
-            name=benchmark_name,
-            line=dict(color="#9B59B6", width=2, dash="dash"),
-            hovertemplate="%{y:.1f}%<extra>" + benchmark_name + "</extra>",
-        ))
+        port_index    = pd.DatetimeIndex(dates)
+        bench_rebased = bench_rebased.reindex(port_index, method="ffill")
 
-        # Annotation écart final
-        fig.add_annotation(
-            x=dates.iloc[-1],
-            y=portef_rebased.iloc[-1],
-            text=f"  {ecart_signe}{ecart:.1f} % vs benchmark",
-            showarrow=False,
-            xanchor="left",
-            font=dict(color=ecart_color, size=13),
-        )
+        # Vérifier qu'on a des valeurs exploitables après reindex
+        if not bench_rebased.isna().all():
+            bench_rebased = bench_rebased.ffill().bfill()
+            perf_bench    = float(bench_rebased.iloc[-1] - 100)
+            ecart         = perf_portef - perf_bench
+            ecart_color   = "#2ECC71" if ecart >= 0 else "#E84C4C"
+            ecart_signe   = "+" if ecart >= 0 else ""
 
+            fig.add_trace(go.Scatter(
+                x=dates,
+                y=bench_rebased.values,
+                name=benchmark_name,
+                line=dict(color="#9B59B6", width=2, dash="dash"),
+                hovertemplate="%{y:.1f}%<extra>" + benchmark_name + "</extra>",
+            ))
+
+            fig.add_annotation(
+                x=dates.iloc[-1],
+                y=portef_rebased.iloc[-1],
+                text=f"  {ecart_signe}{ecart:.1f} % vs benchmark",
+                showarrow=False,
+                xanchor="left",
+                font=dict(color=ecart_color, size=13),
+            )
+        else:
+            fig.add_annotation(
+                x=dates.iloc[len(dates) // 2],
+                y=portef_rebased.mean(),
+                text="⚠️ Données benchmark indisponibles (reindex échoué)",
+                showarrow=False,
+                font=dict(color="#888888", size=12),
+            )
     else:
-        perf_bench = None
-        ecart      = None
         fig.add_annotation(
-            x=dates.iloc[len(dates)//2],
+            x=dates.iloc[len(dates) // 2],
             y=portef_rebased.mean(),
-            text="⚠️ Données benchmark indisponibles",
+            text="⚠️ Données benchmark indisponibles (yfinance)",
             showarrow=False,
             font=dict(color="#888888", size=12),
         )
@@ -511,16 +484,13 @@ def compute_benchmark_comparison(
         hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         xaxis=dict(showgrid=False),
-        yaxis=dict(
-            ticksuffix=" %",
-            tickformat=".0f",
-            gridcolor="#f0f0f0",
-        ),
+        yaxis=dict(ticksuffix=" %", tickformat=".0f", gridcolor="#f0f0f0"),
         plot_bgcolor="white",
         paper_bgcolor="rgba(0,0,0,0)",
     )
 
     return fig, perf_portef, perf_bench, ecart
+
 
 # ============================================================
 # 4. PAGES
@@ -570,8 +540,11 @@ def page_vue_globale():
     if fire["fire_target"] > 0:
         st.progress(
             min(fire["fire_pct"] / 100, 1.0),
-            text=f"{fire['fire_pct']:.1f} % de l'objectif atteint "
-                 f"({kpis['total_value']:,.0f} € / {fire['fire_target']:,.0f} €)".replace(",", " "),
+            text=(
+                f"{fire['fire_pct']:.1f} % de l'objectif atteint "
+                f"({kpis['total_value']:,.0f} € / {fire['fire_target']:,.0f} €)"
+                .replace(",", " ")
+            ),
         )
     else:
         st.info("Objectif FIRE non défini — renseigne-le dans Saisie manuelle.")
@@ -597,7 +570,6 @@ def page_vue_globale():
     # ── Graphique valeur vs capital ────────────────────────────
     st.subheader("📈 Évolution du patrimoine")
 
-    # Filtre de période
     col_period, _ = st.columns([2, 5])
     with col_period:
         periode = st.selectbox(
@@ -607,26 +579,24 @@ def page_vue_globale():
             label_visibility="collapsed",
         )
 
-    # Filtrage du DataFrame selon la période choisie
     today = df_snap["date"].max()
     periode_map = {
-        "1 mois":  today - pd.DateOffset(months=1),
-        "3 mois":  today - pd.DateOffset(months=3),
-        "6 mois":  today - pd.DateOffset(months=6),
-        "1 an":    today - pd.DateOffset(years=1),
-        "Tout":    df_snap["date"].min(),
+        "1 mois": today - pd.DateOffset(months=1),
+        "3 mois": today - pd.DateOffset(months=3),
+        "6 mois": today - pd.DateOffset(months=6),
+        "1 an":   today - pd.DateOffset(years=1),
+        "Tout":   df_snap["date"].min(),
     }
     df_filtered = df_snap[df_snap["date"] >= periode_map[periode]]
 
     fig = compute_perf_chart(df_filtered)
     st.plotly_chart(fig, use_container_width=True)
-    
+
     # ── Drawdown ───────────────────────────────────────────────
     st.subheader("📉 Drawdown")
 
     fig_dd, max_dd = compute_drawdown(df_filtered)
 
-    # Couleur de la métrique selon la sévérité
     if max_dd > -10:
         dd_label = "🟢 Faible"
     elif max_dd > -20:
@@ -639,7 +609,7 @@ def page_vue_globale():
     col_dd2.metric("Niveau de risque", dd_label)
 
     st.plotly_chart(fig_dd, use_container_width=True)
-    
+
     st.divider()
     st.caption(
         f"Dernière donnée : {df_snap.iloc[-1]['date'].strftime('%d/%m/%Y')} "
@@ -683,51 +653,40 @@ def page_analyses():
     # ── 4a : Sharpe & Volatilité ───────────────────────────────
     st.subheader("⚡ Risque & Performance")
 
-    volatility = compute_volatility(df_filtered)
-    sharpe     = compute_sharpe(df_filtered, risk_free_rate)
+    # FIX : seuil minimum pour des métriques fiables
+    MIN_POINTS = 20
 
-    # Interprétation automatique du Sharpe
-    if sharpe >= 2:
-        sharpe_label = "🟢 Excellent"
-    elif sharpe >= 1:
-        sharpe_label = "🟢 Bon"
-    elif sharpe >= 0:
-        sharpe_label = "🟡 Acceptable"
+    if len(df_filtered) < MIN_POINTS:
+        st.warning(
+            f"⏳ Données insuffisantes pour Sharpe et Volatilité "
+            f"({len(df_filtered)} snapshot(s) disponible(s), minimum recommandé : {MIN_POINTS}). "
+            "Ces métriques s'afficheront automatiquement au fil des jours."
+        )
+        col3, col4 = st.columns(2)
+        col3.metric("Taux sans risque (Livret A)", f"{risk_free_rate * 100:.1f} %")
+        col4.metric("Nb jours analysés", f"{len(df_filtered)}")
     else:
-        sharpe_label = "🔴 Négatif"
+        volatility = compute_volatility(df_filtered)
+        sharpe     = compute_sharpe(df_filtered, risk_free_rate)
 
-    # Interprétation automatique de la volatilité
-    if volatility < 10:
-        vol_label = "🟢 Faible"
-    elif volatility < 20:
-        vol_label = "🟡 Modérée"
-    else:
-        vol_label = "🔴 Élevée"
+        sharpe_label = (
+            "🟢 Excellent"  if sharpe >= 2  else
+            "🟢 Bon"        if sharpe >= 1  else
+            "🟡 Acceptable" if sharpe >= 0  else
+            "🔴 Négatif"
+        )
+        vol_label = (
+            "🟢 Faible"  if volatility < 10 else
+            "🟡 Modérée" if volatility < 20 else
+            "🔴 Élevée"
+        )
 
-    col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Ratio de Sharpe", f"{sharpe:.2f}", sharpe_label, delta_color="off")
+        col2.metric("Volatilité annualisée", f"{volatility:.1f} %", vol_label, delta_color="off")
+        col3.metric("Taux sans risque (Livret A)", f"{risk_free_rate * 100:.1f} %")
+        col4.metric("Nb jours analysés", f"{len(df_filtered)}")
 
-    col1.metric(
-        "Ratio de Sharpe",
-        f"{sharpe:.2f}",
-        sharpe_label,
-        delta_color="off",
-    )
-    col2.metric(
-        "Volatilité annualisée",
-        f"{volatility:.1f} %",
-        vol_label,
-        delta_color="off",
-    )
-    col3.metric(
-        "Taux sans risque (Livret A)",
-        f"{risk_free_rate * 100:.1f} %",
-    )
-    col4.metric(
-        "Nb jours analysés",
-        f"{len(df_filtered)}",
-    )
-
-    # Aide à la lecture discrète
     with st.expander("💡 Comment lire ces indicateurs ?"):
         st.markdown("""
         **Ratio de Sharpe** — mesure le rendement obtenu *par unité de risque pris*
@@ -744,29 +703,29 @@ def page_analyses():
         *Le taux sans risque utilisé est le Livret A, paramétrable dans Saisie manuelle.*
         """)
 
-   # ── 4b : Performance vs Livret A ──────────────────────────
+    # ── 4b : Performance vs Livret A ──────────────────────────
     st.subheader("🏦 Portefeuille vs Livret A")
 
     fig_la, perf_portef, perf_livret, ecart = compute_livret_a_comparison(
         df_filtered, risk_free_rate
     )
 
-    # Métriques de synthèse au-dessus du graphique
-    col1, col2, col3 = st.columns(3)
+    # FIX : format adaptatif selon la magnitude (évite +0.00% sur courtes périodes)
+    def format_perf(pct: float) -> str:
+        if abs(pct) < 0.01:
+            return f"{pct:+.4f} %"
+        return f"{pct:+.2f} %"
 
-    col1.metric(
-        "Performance portefeuille",
-        f"{perf_portef:+.2f} %",
-        delta_color="normal",
-    )
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Performance portefeuille", format_perf(perf_portef))
     col2.metric(
         f"Performance Livret A ({risk_free_rate*100:.1f} %)",
-        f"{perf_livret:+.2f} %",
+        format_perf(perf_livret),
         delta_color="off",
     )
     col3.metric(
         "Écart (alpha vs Livret A)",
-        f"{ecart:+.2f} %",
+        format_perf(ecart),
         "✅ Tu bats le Livret A" if ecart >= 0 else "⚠️ Sous le Livret A",
         delta_color="off",
     )
@@ -776,8 +735,7 @@ def page_analyses():
     # ── 4c : Performance vs Benchmark ─────────────────────────
     st.subheader("🏁 Portefeuille vs Benchmark")
 
-    # Sélection du benchmark parmi les assets marqués is_benchmark
-    df_assets = fetch_assets()
+    df_assets     = fetch_assets()
     df_benchmarks = df_assets[
         df_assets["is_benchmark"] == True
     ][["name", "yahoo_ticker"]].dropna(subset=["yahoo_ticker"])
@@ -789,7 +747,6 @@ def page_analyses():
             "sur un ETF (ex: IWDA.AS pour MSCI World)."
         )
     else:
-        # Sélecteur si plusieurs benchmarks disponibles
         if len(df_benchmarks) == 1:
             selected = df_benchmarks.iloc[0]
         else:
@@ -802,21 +759,14 @@ def page_analyses():
             ].iloc[0]
 
         with st.spinner(f"Chargement de {selected['name']}..."):
-            fig_bench, perf_portef, perf_bench, ecart = (
-                compute_benchmark_comparison(
-                    df_filtered,
-                    selected["yahoo_ticker"],
-                    selected["name"],
-                )
+            fig_bench, perf_portef, perf_bench, ecart = compute_benchmark_comparison(
+                df_filtered,
+                selected["yahoo_ticker"],
+                selected["name"],
             )
 
-        # Métriques
         col1, col2, col3 = st.columns(3)
-
-        col1.metric(
-            "Performance portefeuille",
-            f"{perf_portef:+.2f} %",
-        )
+        col1.metric("Performance portefeuille", f"{perf_portef:+.2f} %")
 
         if perf_bench is not None:
             col2.metric(
@@ -835,26 +785,23 @@ def page_analyses():
 
         st.plotly_chart(fig_bench, use_container_width=True)
 
+    # FIX : un seul pied de page (suppression du doublon)
     st.divider()
     st.caption(
         f"Analyse sur {len(df_filtered)} jours · "
         f"du {df_filtered.iloc[0]['date'].strftime('%d/%m/%Y')} "
         f"au {df_filtered.iloc[-1]['date'].strftime('%d/%m/%Y')}"
     )
-    st.divider()
-    st.caption(f"Analyse sur {len(df_filtered)} jours · "
-               f"du {df_filtered.iloc[0]['date'].strftime('%d/%m/%Y')} "
-               f"au {df_filtered.iloc[-1]['date'].strftime('%d/%m/%Y')}")
 
 
 def page_reequilibrage():
     st.title("⚖️ Rééquilibrage PEA")
-    st.info("À venir — Étape 7")
+    st.info("À venir — Étape 6")
 
 
 def page_saisie():
     st.title("✍️ Saisie manuelle")
-    st.info("À venir — Étape 8")
+    st.info("À venir — Étape 7")
 
 
 # ============================================================
@@ -873,10 +820,10 @@ menu = st.sidebar.radio(
         "Saisie manuelle",
     ],
     format_func=lambda x: {
-        "Vue Globale":          "🏠 Vue Globale",
-        "Analyses & Graphiques":"📊 Analyses",
-        "Rééquilibrage PEA":   "⚖️ Rééquilibrage PEA",
-        "Saisie manuelle":     "✍️ Saisie manuelle",
+        "Vue Globale":           "🏠 Vue Globale",
+        "Analyses & Graphiques": "📊 Analyses",
+        "Rééquilibrage PEA":    "⚖️ Rééquilibrage PEA",
+        "Saisie manuelle":      "✍️ Saisie manuelle",
     }[x],
 )
 
