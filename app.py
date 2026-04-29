@@ -856,8 +856,8 @@ def page_analyses():
         )
 
     months = years * 12
-    
-    if not df_filtered.empty:
+
+if not df_filtered.empty:
 
     latest_value = df_filtered.sort_values("date")["total_value"].iloc[-1]
 
