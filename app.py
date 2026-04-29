@@ -491,6 +491,102 @@ def compute_benchmark_comparison(
 
     return fig, perf_portef, perf_bench, ecart
 
+def compute_dca_projection(
+    current_value: float,
+    current_invested: float,
+    monthly_dca: float,
+    annual_return: float,
+    inflation_rate: float,
+    years: int = 20,
+) -> go.Figure:
+    """
+    Projection DCA sur `years` années à partir de la situation actuelle.
+    3 courbes :
+      - Capital investi (linéaire)
+      - Valeur théorique du portefeuille (croissance composée)
+      - Valeur ajustée à l'inflation (pouvoir d'achat réel)
+    """
+    months        = years * 12
+    monthly_return = (1 + annual_return) ** (1 / 12) - 1
+    monthly_infl   = (1 + inflation_rate) ** (1 / 12) - 1
+
+    # Vecteurs de résultats
+    capital_list   = []
+    theorique_list = []
+    reel_list      = []
+    dates_list     = []
+
+    today          = pd.Timestamp.today().normalize()
+    portfolio_val  = current_value
+    capital        = current_invested
+
+    for m in range(months + 1):
+        date = today + pd.DateOffset(months=m)
+        dates_list.append(date)
+        capital_list.append(capital)
+
+        # Valeur nominale : croissance + apport mensuel
+        theorique_list.append(portfolio_val)
+
+        # Valeur réelle : déflation par l'inflation cumulée
+        deflateur = (1 + monthly_infl) ** m
+        reel_list.append(portfolio_val / deflateur)
+
+        # Mise à jour pour le mois suivant
+        portfolio_val = portfolio_val * (1 + monthly_return) + monthly_dca
+        capital      += monthly_dca
+
+    fig = go.Figure()
+
+    # Capital investi (linéaire)
+    fig.add_trace(go.Scatter(
+        x=dates_list,
+        y=capital_list,
+        name="Capital investi",
+        line=dict(color="#888888", width=2, dash="dot"),
+        hovertemplate="%{y:,.0f} €<extra>Capital investi</extra>",
+    ))
+
+    # Valeur ajustée inflation (en dessous de théorique → fill entre les deux)
+    fig.add_trace(go.Scatter(
+        x=dates_list,
+        y=reel_list,
+        name="Valeur réelle (inflation déduite)",
+        line=dict(color="#F5A623", width=2),
+        fill=None,
+        hovertemplate="%{y:,.0f} €<extra>Valeur réelle</extra>",
+    ))
+
+    # Valeur théorique nominale
+    fig.add_trace(go.Scatter(
+        x=dates_list,
+        y=theorique_list,
+        name="Valeur théorique",
+        line=dict(color="#4C9BE8", width=2.5),
+        fill="tonexty",
+        fillcolor="rgba(76, 155, 232, 0.10)",
+        hovertemplate="%{y:,.0f} €<extra>Valeur théorique</extra>",
+    ))
+
+    # Ligne FIRE target si disponible
+    # (passée en paramètre optionnel depuis la page)
+    fig.update_layout(
+        height=450,
+        margin=dict(l=0, r=0, t=30, b=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        hovermode="x unified",
+        xaxis=dict(showgrid=False),
+        yaxis=dict(
+            ticksuffix=" €",
+            tickformat=",.0f",
+            gridcolor="#f0f0f0",
+        ),
+        plot_bgcolor="white",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+
+    return fig, theorique_list, reel_list, capital_list
+
 
 # ============================================================
 # 4. PAGES
@@ -784,6 +880,102 @@ def page_analyses():
             col2.warning("Données benchmark indisponibles")
 
         st.plotly_chart(fig_bench, use_container_width=True)
+
+    # ── 5 : Projection DCA ────────────────────────────────────
+    st.subheader("🔭 Projection DCA")
+
+    monthly_dca    = float(settings.get("monthly_dca") or 0)
+    annual_return  = float(settings.get("estimated_annual_return") or 0.07)
+    inflation_rate = float(settings.get("inflation_rate") or 0.02)
+    fire_target    = float(settings.get("fire_target_amount") or 0)
+
+    # Vérification que les paramètres sont renseignés
+    if monthly_dca == 0:
+        st.info(
+            "💡 Renseigne ton DCA mensuel dans **Saisie manuelle** "
+            "pour activer la projection."
+        )
+    else:
+        # Sélecteur d'horizon temporel
+        col_horizon, col_info = st.columns([2, 5])
+        with col_horizon:
+            years = st.slider(
+                "Horizon (années)",
+                min_value=1,
+                max_value=40,
+                value=20,
+                step=1,
+            )
+
+        # Paramètres utilisés (transparence)
+        with col_info:
+            st.caption(
+                f"DCA mensuel : **{monthly_dca:,.0f} €** · "
+                f"Rendement estimé : **{annual_return*100:.1f} %/an** · "
+                f"Inflation : **{inflation_rate*100:.1f} %/an**"
+            )
+
+        # Calcul à partir de la situation actuelle (pas filtrée)
+        kpis_full = compute_kpis(df_snap)
+        fig_dca, theorique, reel, capital = compute_dca_projection(
+            current_value    = kpis_full["total_value"],
+            current_invested = kpis_full["invested_capital"],
+            monthly_dca      = monthly_dca,
+            annual_return    = annual_return,
+            inflation_rate   = inflation_rate,
+            years            = years,
+        )
+
+        # Métriques à l'horizon choisi
+        val_finale_nom  = theorique[-1]
+        val_finale_reel = reel[-1]
+        capital_final   = capital[-1]
+        gain_total      = val_finale_nom - capital_final
+
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric(
+            f"Valeur dans {years} ans",
+            f"{val_finale_nom:,.0f} €".replace(",", " "),
+        )
+        col2.metric(
+            "Valeur réelle (pouvoir d'achat)",
+            f"{val_finale_reel:,.0f} €".replace(",", " "),
+        )
+        col3.metric(
+            "Capital total investi",
+            f"{capital_final:,.0f} €".replace(",", " "),
+        )
+        col4.metric(
+            "Gain généré par les intérêts",
+            f"{gain_total:,.0f} €".replace(",", " "),
+            f"{(gain_total / capital_final * 100):+.0f} % du capital",
+            delta_color="off",
+        )
+
+        # Ligne FIRE sur le graphique si target définie
+        if fire_target > 0:
+            fig_dca.add_hline(
+                y=fire_target,
+                line_dash="dash",
+                line_color="#2ECC71",
+                line_width=1.5,
+                annotation_text=f"  🎯 Objectif FIRE : {fire_target:,.0f} €".replace(",", " "),
+                annotation_position="top left",
+                annotation_font_color="#2ECC71",
+            )
+
+        st.plotly_chart(fig_dca, use_container_width=True)
+
+        # Revenu passif à l'horizon
+        revenu_passif_nom  = val_finale_nom * 0.04 / 12
+        revenu_passif_reel = val_finale_reel * 0.04 / 12
+
+        st.caption(
+            f"📌 À cet horizon, la règle des 4% générerait "
+            f"**{revenu_passif_nom:,.0f} €/mois** nominaux "
+            f"(soit **{revenu_passif_reel:,.0f} €/mois** en euros d'aujourd'hui)"
+            .replace(",", " ")
+        )
 
     # FIX : un seul pied de page (suppression du doublon)
     st.divider()
