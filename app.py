@@ -309,6 +309,44 @@ def compute_drawdown(df_snap: pd.DataFrame) -> tuple[go.Figure, float]:
 
     return fig, max_dd
 
+def compute_volatility(df_snap: pd.DataFrame) -> float:
+    """
+    Volatilité annualisée des rendements journaliers (en %).
+    Retourne 0.0 si pas assez de données.
+    """
+    if len(df_snap) < 2:
+        return 0.0
+
+    returns = df_snap["total_value"].astype(float).pct_change().dropna()
+
+    if returns.empty:
+        return 0.0
+
+    return float(returns.std() * (252 ** 0.5) * 100)  # en %
+
+
+def compute_sharpe(df_snap: pd.DataFrame, risk_free_rate: float) -> float:
+    """
+    Ratio de Sharpe annualisé.
+    risk_free_rate : taux annuel en décimal (ex: 0.03 pour 3%)
+    Retourne 0.0 si pas assez de données.
+    """
+    if len(df_snap) < 2:
+        return 0.0
+
+    returns = df_snap["total_value"].astype(float).pct_change().dropna()
+
+    if returns.empty or returns.std() == 0:
+        return 0.0
+
+    # Taux journalier sans risque
+    daily_rf = risk_free_rate / 252
+
+    excess_returns     = returns - daily_rf
+    sharpe_annualized  = (excess_returns.mean() / returns.std()) * (252 ** 0.5)
+
+    return float(sharpe_annualized)
+
 # ============================================================
 # 4. PAGES
 # ============================================================
@@ -435,8 +473,107 @@ def page_vue_globale():
 
 
 def page_analyses():
-    st.title("📈 Analyses & Graphiques")
-    st.info("À venir — Étape 4")
+    st.title("📊 Analyses & Graphiques")
+
+    df_snap  = fetch_snapshots_agg()
+    settings = fetch_settings()
+
+    if df_snap.empty:
+        st.warning("Aucun snapshot disponible.")
+        return
+
+    risk_free_rate = float(settings.get("livret_a_rate") or 0.03)
+
+    # ── Filtre de période (partagé sur toute la page) ──────────
+    col_period, _ = st.columns([2, 5])
+    with col_period:
+        periode = st.selectbox(
+            "Période d'analyse",
+            options=["3 mois", "6 mois", "1 an", "3 ans", "Tout"],
+            index=2,
+        )
+
+    today = df_snap["date"].max()
+    periode_map = {
+        "3 mois": today - pd.DateOffset(months=3),
+        "6 mois": today - pd.DateOffset(months=6),
+        "1 an":   today - pd.DateOffset(years=1),
+        "3 ans":  today - pd.DateOffset(years=3),
+        "Tout":   df_snap["date"].min(),
+    }
+    df_filtered = df_snap[df_snap["date"] >= periode_map[periode]]
+
+    st.divider()
+
+    # ── 4a : Sharpe & Volatilité ───────────────────────────────
+    st.subheader("⚡ Risque & Performance")
+
+    volatility = compute_volatility(df_filtered)
+    sharpe     = compute_sharpe(df_filtered, risk_free_rate)
+
+    # Interprétation automatique du Sharpe
+    if sharpe >= 2:
+        sharpe_label = "🟢 Excellent"
+    elif sharpe >= 1:
+        sharpe_label = "🟢 Bon"
+    elif sharpe >= 0:
+        sharpe_label = "🟡 Acceptable"
+    else:
+        sharpe_label = "🔴 Négatif"
+
+    # Interprétation automatique de la volatilité
+    if volatility < 10:
+        vol_label = "🟢 Faible"
+    elif volatility < 20:
+        vol_label = "🟡 Modérée"
+    else:
+        vol_label = "🔴 Élevée"
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    col1.metric(
+        "Ratio de Sharpe",
+        f"{sharpe:.2f}",
+        sharpe_label,
+        delta_color="off",
+    )
+    col2.metric(
+        "Volatilité annualisée",
+        f"{volatility:.1f} %",
+        vol_label,
+        delta_color="off",
+    )
+    col3.metric(
+        "Taux sans risque (Livret A)",
+        f"{risk_free_rate * 100:.1f} %",
+    )
+    col4.metric(
+        "Nb jours analysés",
+        f"{len(df_filtered)}",
+    )
+
+    # Aide à la lecture discrète
+    with st.expander("💡 Comment lire ces indicateurs ?"):
+        st.markdown("""
+        **Ratio de Sharpe** — mesure le rendement obtenu *par unité de risque pris*
+        - `> 2` : excellent, rendement très bien rémunéré
+        - `1 → 2` : bon, performance solide pour le risque
+        - `0 → 1` : acceptable, mais le risque est peu rémunéré
+        - `< 0` : le portefeuille fait moins bien que le taux sans risque
+
+        **Volatilité annualisée** — amplitude moyenne des fluctuations
+        - `< 10 %` : faible (profil obligataire)
+        - `10–20 %` : modérée (profil actions diversifié)
+        - `> 20 %` : élevée (profil agressif ou concentré)
+
+        *Le taux sans risque utilisé est le Livret A, paramétrable dans Saisie manuelle.*
+        """)
+
+    # (4b Livret A et 4c Benchmark à venir)
+    st.divider()
+    st.caption(f"Analyse sur {len(df_filtered)} jours · "
+               f"du {df_filtered.iloc[0]['date'].strftime('%d/%m/%Y')} "
+               f"au {df_filtered.iloc[-1]['date'].strftime('%d/%m/%Y')}")
 
 
 def page_reequilibrage():
