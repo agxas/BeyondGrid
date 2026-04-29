@@ -245,6 +245,69 @@ def compute_perf_chart(df_snap: pd.DataFrame) -> go.Figure:
 
     return fig
 
+def compute_drawdown(df_snap: pd.DataFrame) -> tuple[go.Figure, float]:
+    """
+    Calcule et trace le drawdown depuis le plus haut historique.
+    Retourne (figure, drawdown_max_en_pct).
+    """
+    values = df_snap["total_value"].astype(float)
+    dates  = df_snap["date"]
+
+    # Maximum glissant (peak)
+    peak     = values.cummax()
+    drawdown = (values - peak) / peak * 100  # en %, toujours ≤ 0
+
+    max_dd = drawdown.min()  # le pire drawdown (valeur la plus négative)
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=dates,
+        y=drawdown,
+        name="Drawdown",
+        line=dict(color="#E84C4C", width=2),
+        fill="tozeroy",
+        fillcolor="rgba(232, 76, 76, 0.15)",
+        hovertemplate="%{y:.2f} %<extra></extra>",
+    ))
+
+    # Ligne zéro pour référence visuelle
+    fig.add_hline(
+        y=0,
+        line_dash="dot",
+        line_color="#888888",
+        line_width=1,
+    )
+
+    # Annotation du pire drawdown
+    idx_max_dd = drawdown.idxmin()
+    fig.add_annotation(
+        x=dates.iloc[idx_max_dd],
+        y=max_dd,
+        text=f"  Max DD : {max_dd:.1f} %",
+        showarrow=True,
+        arrowhead=2,
+        arrowcolor="#E84C4C",
+        font=dict(color="#E84C4C", size=12),
+        bgcolor="rgba(255,255,255,0.8)",
+    )
+
+    fig.update_layout(
+        height=280,
+        margin=dict(l=0, r=0, t=20, b=0),
+        hovermode="x unified",
+        showlegend=False,
+        xaxis=dict(showgrid=False),
+        yaxis=dict(
+            ticksuffix=" %",
+            tickformat=".1f",
+            gridcolor="#f0f0f0",
+        ),
+        plot_bgcolor="white",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+
+    return fig, max_dd
 
 # ============================================================
 # 4. PAGES
@@ -344,6 +407,26 @@ def page_vue_globale():
 
     fig = compute_perf_chart(df_filtered)
     st.plotly_chart(fig, use_container_width=True)
+    
+    # ── Drawdown ───────────────────────────────────────────────
+    st.subheader("📉 Drawdown")
+
+    fig_dd, max_dd = compute_drawdown(df_filtered)
+
+    # Couleur de la métrique selon la sévérité
+    if max_dd > -10:
+        dd_label = "🟢 Faible"
+    elif max_dd > -20:
+        dd_label = "🟡 Modéré"
+    else:
+        dd_label = "🔴 Sévère"
+
+    col_dd1, col_dd2, _ = st.columns([1, 1, 5])
+    col_dd1.metric("Pire drawdown", f"{max_dd:.1f} %")
+    col_dd2.metric("Niveau de risque", dd_label)
+
+    st.plotly_chart(fig_dd, use_container_width=True)
+    
     st.divider()
     st.caption(
         f"Dernière donnée : {df_snap.iloc[-1]['date'].strftime('%d/%m/%Y')} "
