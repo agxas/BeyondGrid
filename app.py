@@ -835,53 +835,53 @@ def page_analyses():
         st.plotly_chart(fig_bench, use_container_width=True)
 
     # ── 5 : Projection DCA ─────────────────────────
-    st.subheader("📈 Projection DCA")
-    
-    settings = fetch_settings()
-    snapshots = fetch_snapshots()
-    
-    if not snapshots.empty:
-        latest_value = snapshots.sort_values("date")["total_value"].iloc[-1]
-    
-        dca_df = compute_dca_projection(
-            current_value=latest_value,
-            monthly_dca=settings["monthly_dca"],
-            annual_return=settings["estimated_annual_return"],
-            inflation_rate=settings["inflation_rate"],
-            months=120
-        )
-    
-        import plotly.graph_objects as go
-    
-        fig = go.Figure()
-    
-        fig.add_trace(go.Scatter(
-            x=dca_df["date"],
-            y=dca_df["invested"],
-            name="Capital investi",
-            line=dict(dash="dot")
-        ))
-    
-        fig.add_trace(go.Scatter(
-            x=dca_df["date"],
-            y=dca_df["portfolio"],
-            name="Valeur portefeuille"
-        ))
-    
-        fig.add_trace(go.Scatter(
-            x=dca_df["date"],
-            y=dca_df["inflation_adjusted"],
-            name="Valeur réelle (inflation)",
-            line=dict(dash="dash")
-        ))
-    
-        fig.update_layout(
-            title="Projection DCA sur 10 ans",
-            xaxis_title="Date",
-            yaxis_title="Valeur (€)"
-        )
-    
-        st.plotly_chart(fig, use_container_width=True)
+st.subheader("📈 Projection DCA")
+
+settings = fetch_settings()
+snapshots = fetch_snapshots()
+
+if not snapshots.empty:
+    latest_value = snapshots.sort_values("date")["total_value"].iloc[-1]
+
+    dca_df = compute_dca_projection(
+        current_value=latest_value,
+        monthly_dca=settings["monthly_dca"],
+        annual_return=settings["estimated_annual_return"],
+        inflation_rate=settings["inflation_rate"],
+        months=120
+    )
+
+    import plotly.graph_objects as go
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=dca_df["date"],
+        y=dca_df["invested"],
+        name="Capital investi",
+        line=dict(dash="dot")
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=dca_df["date"],
+        y=dca_df["portfolio"],
+        name="Valeur portefeuille"
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=dca_df["date"],
+        y=dca_df["inflation_adjusted"],
+        name="Valeur réelle (inflation)",
+        line=dict(dash="dash")
+    ))
+
+    fig.update_layout(
+        title="Projection DCA sur 10 ans",
+        xaxis_title="Date",
+        yaxis_title="Valeur (€)"
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
 
     # FIX : un seul pied de page (suppression du doublon)
     st.divider()
