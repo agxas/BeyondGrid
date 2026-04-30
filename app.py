@@ -765,12 +765,6 @@ def compute_rebalancing_orders(
     else:
         reliquat_par_asset = 0
 
-    if reliquat_par_asset > 0:
-        warnings_list.append(
-            f"ℹ️ Reliquat résiduel de {reliquat:.2f} € réparti équitablement "
-            f"entre les {len(df_eligible)} assets ({reliquat_par_asset:.2f} €/asset) "
-            "— inclus dans le montant à saisir."
-        )
 
     # ── ÉTAPE 5 : arrondi au multiple de 5€ supérieur ──────────
     import math
@@ -1225,8 +1219,7 @@ def page_reequilibrage():
     total_pea     = df_positions["value"].sum()
 
     # ── Infos compte ───────────────────────────────────────────
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Compte", pea_account["name"])
+    col2, col3 = st.columns(2)
     col2.metric("Valeur totale PEA", f"{total_pea:,.0f} €".replace(",", " "))
     col3.metric(
         "DCA mensuel (settings)",
@@ -1261,7 +1254,7 @@ def page_reequilibrage():
             min_value=0.0,
             max_value=100.0,
             value=round(poids_actuel, 1),
-            step=0.5,
+            step=1,
             key=f"target_{aid}",
             label_visibility="collapsed",
         )
