@@ -26,6 +26,19 @@ st.set_page_config(
     layout="wide",
 )
 
+# ============================================================
+# VERSION
+# ============================================================
+APP_VERSION = "1.0"
+PATCH_NOTES = {
+    "1.0": [
+        "Vue Globale : KPIs, objectif FIRE, évolution patrimoine, drawdown",
+        "Analyses : Sharpe, volatilité, Livret A, benchmark, projection DCA",
+        "Rééquilibrage PEA : allocations cibles et ordres Trade Republic",
+        "Saisie manuelle : paramètres, prix manuels, transactions",
+    ],
+}
+
 @st.cache_resource
 def init_db():
     return create_client(
@@ -1586,6 +1599,13 @@ def page_saisie():
 
             st.divider()
 
+            # Prix par défaut selon l'asset sélectionné
+            default_price = 0.0
+            if asset is not None:
+                asset_row = df_assets[df_assets["id"] == asset]
+                if not asset_row.empty:
+                    default_price = float(asset_row.iloc[0].get("last_known_price") or 0.0)
+
             # Champs selon le type — mis à jour en temps réel
             is_trade = type_txn in ("buy", "sell")
             col3, col4, col5 = st.columns(3)
@@ -1598,7 +1618,7 @@ def page_saisie():
                 )
                 unit_price = col4.number_input(
                     "Prix unitaire (€)",
-                    min_value=0.0, value=0.0, step=0.01,
+                    min_value=0.0, value=default_price, step=0.01,
                     key="txn_price",
                 )
                 fees = col5.number_input(
@@ -1678,6 +1698,13 @@ def page_saisie():
 st.sidebar.title("BeyondGrid 📈")
 st.sidebar.caption("Suivi d'investissement")
 
+# ── Bouton de rafraîchissement manuel ──────────────────────
+if st.sidebar.button("🔄 Actualiser les données", use_container_width=True):
+    st.cache_data.clear()
+    st.rerun()
+
+st.sidebar.divider()
+
 menu = st.sidebar.radio(
     "Navigation",
     options=[
@@ -1702,3 +1729,12 @@ elif menu == "Rééquilibrage PEA":
     page_reequilibrage()
 elif menu == "Saisie manuelle":
     page_saisie()
+
+# ── Version en bas de sidebar ──────────────────────────────
+st.sidebar.divider()
+with st.sidebar.expander(f"📋 v{APP_VERSION} — Patch notes"):
+    for version, notes in PATCH_NOTES.items():
+        st.markdown(f"**v{version}**")
+        for note in notes:
+            st.markdown(f"- {note}")
+st.sidebar.caption(f"BeyondGrid v{APP_VERSION}")
