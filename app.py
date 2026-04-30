@@ -1253,8 +1253,8 @@ def page_reequilibrage():
             "Cible %",
             min_value=0.0,
             max_value=100.0,
-            value=round(poids_actuel, 1),
-            step=1,
+            value=float(round(poids_actuel)),  # entier, compatible avec step
+            step=1.0,
             key=f"target_{aid}",
             label_visibility="collapsed",
         )
