@@ -48,7 +48,10 @@ PATCH_NOTES = {
 PRICE_LINKS: dict[str, str] = {
     # Exemples — remplace par tes ISINs et URLs :
     # "LU0292095535": "https://www.justetf.com/fr/etf-profile.html?isin=LU0292095535#apercu",
-    # "FR0010149203": "https://www.boursorama.com/bourse/opcvm/cours/0P0001DKPM/",
+    "LU0292095535": "https://www.justetf.com/fr/etf-profile.html?isin=LU0292095535#apercu",
+    "LU1832174962": "https://www.boursorama.com/bourse/opcvm/cours/0P0001DKPM/",
+    "QS0004088926": "https://investir.lesechos.fr/cours/opcvm/impact-isr-performance-i-qs0004088926",
+    "QS0004036743": "https://investir.lesechos.fr/cours/opcvm/selection-mirova-actions-interntl-i-qs0004036743"
 }
 
 @st.cache_resource
