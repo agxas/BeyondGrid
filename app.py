@@ -587,6 +587,214 @@ def compute_dca_projection(
 
     return fig, theorique_list, reel_list, capital_list
 
+def compute_pea_positions(
+    df_transactions: pd.DataFrame,
+    df_assets: pd.DataFrame,
+    account_id: int,
+) -> pd.DataFrame:
+    """
+    Reconstruit les positions actuelles du PEA depuis les transactions.
+    Retourne un DataFrame :
+      asset_id | name | yahoo_ticker | last_known_price | quantity | value
+    """
+    df_txn = df_transactions[
+        (df_transactions["account_id"] == account_id) &
+        (df_transactions["asset_id"].notna())
+    ].copy()
+
+    if df_txn.empty:
+        return pd.DataFrame()
+
+    # Quantité nette par asset
+    positions = {}
+    for _, row in df_txn.iterrows():
+        aid = int(row["asset_id"])
+        qty = float(row["quantity"] or 0)
+        if row["type"] == "buy":
+            positions[aid] = positions.get(aid, 0) + qty
+        elif row["type"] == "sell":
+            positions[aid] = positions.get(aid, 0) - qty
+
+    # Filtrer les positions > 0
+    positions = {k: v for k, v in positions.items() if v > 1e-9}
+
+    if not positions:
+        return pd.DataFrame()
+
+    # Enrichir avec les infos assets
+    df_pos = pd.DataFrame([
+        {"asset_id": k, "quantity": v}
+        for k, v in positions.items()
+    ])
+    df_pos = df_pos.merge(
+        df_assets[["id", "name", "yahoo_ticker", "last_known_price"]],
+        left_on="asset_id", right_on="id", how="left"
+    ).drop(columns=["id"])
+
+    df_pos["last_known_price"] = df_pos["last_known_price"].astype(float)
+    df_pos["value"] = df_pos["quantity"] * df_pos["last_known_price"]
+
+    return df_pos.reset_index(drop=True)
+
+
+def compute_rebalancing_orders(
+    df_positions: pd.DataFrame,
+    targets: dict[str, float],   # {asset_id (str): target_pct (0-100)}
+    dca_amount: float,
+) -> tuple[pd.DataFrame, list[dict], list[str]]:
+    """
+    Algorithme de rééquilibrage avec répartition intelligente du reliquat.
+
+    Retourne :
+      df_summary  → tableau de situation (actuel vs cible)
+      orders      → liste de dicts {name, nb_titres, prix, montant_reel, a_saisir}
+      warnings    → liste de messages d'alerte
+    """
+    warnings_list = []
+    total_pea     = df_positions["value"].sum()
+
+    # ── Tableau de situation ────────────────────────────────────
+    rows = []
+    for _, row in df_positions.iterrows():
+        aid      = str(row["asset_id"])
+        poids    = (row["value"] / total_pea * 100) if total_pea > 0 else 0
+        cible    = targets.get(aid, 0)
+        ecart    = cible - poids  # positif = sous-pondéré
+        rows.append({
+            "asset_id":   aid,
+            "name":       row["name"],
+            "prix":       row["last_known_price"],
+            "quantity":   row["quantity"],
+            "value":      row["value"],
+            "poids_pct":  round(poids, 2),
+            "cible_pct":  round(cible, 2),
+            "ecart_pct":  round(ecart, 2),
+        })
+
+    df_summary = pd.DataFrame(rows)
+
+    # ── ÉTAPE 1 : assets sous-pondérés avec cible définie ──────
+    df_under = df_summary[
+        (df_summary["ecart_pct"] > 0) &
+        (df_summary["cible_pct"] > 0)
+    ].copy()
+
+    if df_under.empty:
+        warnings_list.append("✅ Portefeuille déjà à l'équilibre, rien à acheter.")
+        return df_summary, [], warnings_list
+
+    somme_ecarts = df_under["ecart_pct"].sum()
+
+    # ── ÉTAPE 2 : allocation initiale (floor) ──────────────────
+    df_under["montant_ideal"] = dca_amount * (df_under["ecart_pct"] / somme_ecarts)
+    df_under["nb_titres"]     = (df_under["montant_ideal"] / df_under["prix"]).apply(
+        lambda x: int(x) if x >= 1 else 0
+    )
+
+    # Retirer les assets dont 1 titre coûte plus que l'allocation idéale
+    ineligibles = df_under[df_under["nb_titres"] == 0]
+    for _, row in ineligibles.iterrows():
+        warnings_list.append(
+            f"⚠️ **{row['name']}** : 1 titre = {row['prix']:.2f} € "
+            f"> allocation idéale ({row['montant_ideal']:.0f} €) — exclu de ce DCA."
+        )
+
+    df_eligible = df_under[df_under["nb_titres"] > 0].copy()
+
+    if df_eligible.empty:
+        warnings_list.append(
+            "⚠️ Aucun asset éligible : le DCA est insuffisant pour acheter "
+            "au moins 1 titre de chaque asset sous-pondéré."
+        )
+        return df_summary, [], warnings_list
+
+    # Calcul du reliquat après floor
+    df_eligible["montant_floor"] = df_eligible["nb_titres"] * df_eligible["prix"]
+    reliquat = dca_amount - df_eligible["montant_floor"].sum()
+
+    # ── ÉTAPE 3 : greedy sur le reliquat ───────────────────────
+    nb_titres_dict = df_eligible.set_index("asset_id")["nb_titres"].to_dict()
+    prix_dict      = df_eligible.set_index("asset_id")["prix"].to_dict()
+    ecart_dict     = df_eligible.set_index("asset_id")["ecart_pct"].to_dict()
+    value_dict     = df_positions.set_index(
+        df_positions["asset_id"].astype(str)
+    )["value"].to_dict()
+
+    MAX_ITER = 1000
+    iteration = 0
+    while reliquat > 0 and iteration < MAX_ITER:
+        iteration += 1
+        # Assets éligibles dont le prix ≤ reliquat
+        candidats = {
+            aid: prix for aid, prix in prix_dict.items()
+            if prix <= reliquat
+        }
+        if not candidats:
+            break
+
+        # Choisir l'asset dont l'achat d'1 titre corrige le mieux l'écart
+        # Score = écart restant après achat (on choisit le max)
+        best_aid  = None
+        best_score = -999
+
+        for aid in candidats:
+            # Simulation : nouveau poids après achat d'1 titre supplémentaire
+            nouvelle_valeur  = value_dict.get(aid, 0) + (nb_titres_dict[aid] + 1) * prix_dict[aid]
+            nouveau_total    = total_pea + dca_amount
+            nouveau_poids    = nouvelle_valeur / nouveau_total * 100
+            ecart_restant    = ecart_dict[aid] - (nouveau_poids - (
+                value_dict.get(aid, 0) / total_pea * 100
+            ))
+            score = ecart_restant
+            if score > best_score:
+                best_score = score
+                best_aid   = aid
+
+        if best_aid is None:
+            break
+
+        nb_titres_dict[best_aid] += 1
+        reliquat -= prix_dict[best_aid]
+
+    # ── ÉTAPE 4 : reliquat résiduel → répartition équitable ────
+    if reliquat > 0.5:
+        n = len(df_eligible)
+        part_equitable = reliquat / n
+        # Juste ajouté au montant à saisir, pas en titres supplémentaires
+        reliquat_par_asset = part_equitable
+    else:
+        reliquat_par_asset = 0
+
+    if reliquat_par_asset > 0:
+        warnings_list.append(
+            f"ℹ️ Reliquat résiduel de {reliquat:.2f} € réparti équitablement "
+            f"entre les {len(df_eligible)} assets ({reliquat_par_asset:.2f} €/asset) "
+            "— inclus dans le montant à saisir."
+        )
+
+    # ── ÉTAPE 5 : arrondi au multiple de 5€ supérieur ──────────
+    import math
+
+    orders = []
+    for _, row in df_eligible.iterrows():
+        aid          = row["asset_id"]
+        nb           = nb_titres_dict[aid]
+        prix         = prix_dict[aid]
+        montant_reel = nb * prix
+        # Montant à saisir = montant réel + part reliquat, arrondi 5€ sup
+        montant_saisir = math.ceil((montant_reel + reliquat_par_asset) / 5) * 5
+
+        orders.append({
+            "asset_id":      aid,
+            "name":          row["name"],
+            "prix":          prix,
+            "nb_titres":     nb,
+            "montant_reel":  round(montant_reel, 2),
+            "a_saisir":      montant_saisir,
+        })
+
+    return df_summary, orders, warnings_list
+
 
 # ============================================================
 # 4. PAGES
@@ -988,7 +1196,178 @@ def page_analyses():
 
 def page_reequilibrage():
     st.title("⚖️ Rééquilibrage PEA")
-    st.info("À venir — Étape 6")
+
+    # ── Chargement des données ──────────────────────────────────
+    settings      = fetch_settings()
+    df_accounts   = fetch_accounts()
+    df_assets     = fetch_assets()
+    df_txn        = fetch_transactions()
+
+    dca_amount    = float(settings.get("monthly_dca") or 0)
+
+    # Compte PEA
+    pea_accounts  = df_accounts[df_accounts["type"] == "PEA"]
+
+    if pea_accounts.empty:
+        st.warning("Aucun compte de type PEA trouvé dans la base.")
+        return
+
+    pea_account   = pea_accounts.iloc[0]
+    pea_id        = int(pea_account["id"])
+
+    # Positions actuelles
+    df_positions  = compute_pea_positions(df_txn, df_assets, pea_id)
+
+    if df_positions.empty:
+        st.warning("Aucune position trouvée sur le PEA. Vérifie tes transactions.")
+        return
+
+    total_pea     = df_positions["value"].sum()
+
+    # ── Infos compte ───────────────────────────────────────────
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Compte", pea_account["name"])
+    col2.metric("Valeur totale PEA", f"{total_pea:,.0f} €".replace(",", " "))
+    col3.metric(
+        "DCA mensuel (settings)",
+        f"{dca_amount:,.0f} €".replace(",", " ") if dca_amount > 0
+        else "⚠️ Non défini",
+    )
+
+    if dca_amount == 0:
+        st.info("Définis ton DCA mensuel dans **Saisie manuelle** pour utiliser cette page.")
+        return
+
+    st.divider()
+
+    # ── Saisie des allocations cibles ──────────────────────────
+    st.subheader("🎯 Allocations cibles")
+    st.caption("Renseigne le pourcentage cible pour chaque ligne. Le total doit faire 100 %.")
+
+    targets    = {}
+    total_cible = 0.0
+
+    # Formulaire par asset
+    for _, row in df_positions.iterrows():
+        aid        = str(int(row["asset_id"]))
+        poids_actuel = row["value"] / total_pea * 100
+
+        col_name, col_actuel, col_cible = st.columns([3, 1, 1])
+        col_name.markdown(f"**{row['name']}**")
+        col_actuel.metric("Actuel", f"{poids_actuel:.1f} %")
+
+        cible = col_cible.number_input(
+            "Cible %",
+            min_value=0.0,
+            max_value=100.0,
+            value=round(poids_actuel, 1),
+            step=0.5,
+            key=f"target_{aid}",
+            label_visibility="collapsed",
+        )
+        targets[aid] = cible
+        total_cible += cible
+
+    # Indicateur du total
+    if abs(total_cible - 100) < 0.1:
+        st.success(f"✅ Total : {total_cible:.1f} % — prêt à calculer")
+    else:
+        st.error(f"❌ Total : {total_cible:.1f} % — doit être égal à 100 %")
+
+    st.divider()
+
+    # ── Calcul ─────────────────────────────────────────────────
+    if abs(total_cible - 100) < 0.1:
+
+        df_summary, orders, warnings_list = compute_rebalancing_orders(
+            df_positions, targets, dca_amount
+        )
+
+        # ── Tableau de situation ────────────────────────────────
+        st.subheader("📊 Situation actuelle vs cible")
+
+        def color_ecart(val):
+            if val > 0.5:
+                return "color: #2ECC71"   # sous-pondéré → vert (à acheter)
+            elif val < -0.5:
+                return "color: #E84C4C"   # sur-pondéré → rouge
+            return "color: #888888"
+
+        df_display = df_summary[[
+            "name", "value", "poids_pct", "cible_pct", "ecart_pct"
+        ]].copy()
+        df_display.columns = ["Asset", "Valeur (€)", "Actuel %", "Cible %", "Écart %"]
+        df_display["Valeur (€)"] = df_display["Valeur (€)"].map(
+            lambda x: f"{x:,.0f} €".replace(",", " ")
+        )
+
+        st.dataframe(
+            df_display.style.map(color_ecart, subset=["Écart %"]),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        # ── Warnings ───────────────────────────────────────────
+        for w in warnings_list:
+            if w.startswith("✅"):
+                st.success(w)
+            elif w.startswith("⚠️"):
+                st.warning(w)
+            elif w.startswith("ℹ️"):
+                st.info(w)
+
+        # ── Récap des ordres ───────────────────────────────────
+        if orders:
+            st.subheader("🛒 Ordres à passer sur Trade Republic")
+
+            # Récap visuel principal
+            st.markdown("### 👉 Ce mois-ci, saisis :")
+
+            cols = st.columns(len(orders))
+            for i, order in enumerate(orders):
+                cols[i].metric(
+                    order["name"],
+                    f"{order['a_saisir']} €",
+                    f"{order['nb_titres']} titre(s) × {order['prix']:.2f} €",
+                    delta_color="off",
+                )
+
+            # Tableau détaillé
+            with st.expander("📋 Détail des ordres"):
+                df_orders = pd.DataFrame(orders)[[
+                    "name", "nb_titres", "prix", "montant_reel", "a_saisir"
+                ]]
+                df_orders.columns = [
+                    "Asset", "Titres", "Prix unitaire", "Montant réel", "À saisir (TR)"
+                ]
+                df_orders["Prix unitaire"] = df_orders["Prix unitaire"].map(
+                    lambda x: f"{x:.2f} €"
+                )
+                df_orders["Montant réel"] = df_orders["Montant réel"].map(
+                    lambda x: f"{x:,.2f} €".replace(",", " ")
+                )
+                df_orders["À saisir (TR)"] = df_orders["À saisir (TR)"].map(
+                    lambda x: f"{x} €"
+                )
+                st.dataframe(df_orders, use_container_width=True, hide_index=True)
+
+            # Récap financier
+            total_reel   = sum(o["montant_reel"] for o in orders)
+            total_saisir = sum(o["a_saisir"] for o in orders)
+
+            st.divider()
+            col1, col2, col3 = st.columns(3)
+            col1.metric("DCA disponible", f"{dca_amount:,.0f} €".replace(",", " "))
+            col2.metric(
+                "Total réellement investi",
+                f"{total_reel:,.2f} €".replace(",", " "),
+            )
+            col3.metric(
+                "Total à saisir sur TR",
+                f"{total_saisir} €",
+                f"Marge : +{total_saisir - total_reel:.2f} €",
+                delta_color="off",
+            )
 
 
 def page_saisie():
