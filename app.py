@@ -789,33 +789,6 @@ def compute_rebalancing_orders(
 
     return df_summary, orders, warnings_list
 
-def compute_total_amount(
-    type_: str,
-    quantity: float,
-    unit_price: float,
-    fees: float,
-    manual_amount: float,
-) -> float:
-    """
-    Calcule total_amount selon le type de transaction.
-    Conventions alignées avec snapshot.py :
-      total_amount > 0 → entrée d'argent dans l'enveloppe
-      total_amount < 0 → sortie d'argent
-    """
-    if type_ == "buy":
-        return -((quantity * unit_price) + fees)
-    elif type_ == "sell":
-        return (quantity * unit_price) - fees
-    elif type_ == "deposit":
-        return abs(manual_amount)
-    elif type_ == "withdrawal":
-        return -abs(manual_amount)
-    elif type_ == "dividend":
-        return abs(manual_amount)
-    elif type_ == "fee":
-        return -abs(manual_amount)
-    return 0.0
-
 
 # ============================================================
 # 4. PAGES
@@ -1280,7 +1253,7 @@ def page_reequilibrage():
             "Cible %",
             min_value=0.0,
             max_value=100.0,
-            value=float(round(poids_actuel)),  # entier, compatible avec step
+            value=float(round(poids_actuel)),
             step=1.0,
             key=f"target_{aid}",
             label_visibility="collapsed",
@@ -1390,14 +1363,41 @@ def page_reequilibrage():
             )
 
 
+def compute_total_amount(
+    type_: str,
+    quantity: float,
+    unit_price: float,
+    fees: float,
+    manual_amount: float,
+) -> float:
+    """
+    Calcule total_amount selon le type de transaction.
+    Conventions alignées avec snapshot.py :
+      total_amount > 0 → entrée d'argent dans l'enveloppe
+      total_amount < 0 → sortie d'argent
+    """
+    if type_ == "buy":
+        return -((quantity * unit_price) + fees)
+    elif type_ == "sell":
+        return (quantity * unit_price) - fees
+    elif type_ == "deposit":
+        return abs(manual_amount)
+    elif type_ == "withdrawal":
+        return -abs(manual_amount)
+    elif type_ == "dividend":
+        return abs(manual_amount)
+    elif type_ == "fee":
+        return -abs(manual_amount)
+    return 0.0
+
+
 def page_saisie():
     st.title("✍️ Saisie manuelle")
 
-    settings     = fetch_settings()
-    df_accounts  = fetch_accounts()
-    df_assets    = fetch_assets()
+    settings    = fetch_settings()
+    df_accounts = fetch_accounts()
+    df_assets   = fetch_assets()
 
-    # 3 onglets pour séparer les 3 sections
     tab_settings, tab_prix, tab_transaction = st.tabs([
         "⚙️ Paramètres",
         "💲 Prix manuels",
@@ -1458,12 +1458,12 @@ def page_saisie():
                     help="Patrimoine cible pour atteindre l'indépendance financière",
                 )
 
-            submitted = st.form_submit_button(
+            submitted_settings = st.form_submit_button(
                 "💾 Enregistrer les paramètres",
                 use_container_width=True,
             )
 
-        if submitted:
+        if submitted_settings:
             try:
                 supabase.table("settings").upsert({
                     "id":                      1,
@@ -1475,11 +1475,8 @@ def page_saisie():
                     "fire_target_amount":      fire_target,
                     "updated_at":              pd.Timestamp.now(tz="UTC").isoformat(),
                 }).execute()
-
-                # Invalider le cache pour que les autres pages voient les nouvelles valeurs
                 fetch_settings.clear()
                 st.success("✅ Paramètres enregistrés avec succès !")
-
             except Exception as e:
                 st.error(f"❌ Erreur lors de la sauvegarde : {e}")
 
@@ -1496,13 +1493,13 @@ def page_saisie():
             st.info("Aucun asset en prix manuel dans la base.")
         else:
             for _, row in df_manual.iterrows():
-                aid          = int(row["id"])
+                aid           = int(row["id"])
                 current_price = float(row["last_known_price"] or 0)
                 last_updated  = row.get("last_price_updated_at", None)
 
                 col_name, col_price, col_date, col_btn = st.columns([3, 2, 2, 1])
-
                 col_name.markdown(f"**{row['name']}**")
+
                 if last_updated:
                     try:
                         dt = pd.to_datetime(last_updated).strftime("%d/%m/%Y")
@@ -1532,6 +1529,8 @@ def page_saisie():
 
     # ══════════════════════════════════════════════════════════
     # ONGLET 3 — NOUVELLE TRANSACTION
+    # FIX : pas de st.form ici — les widgets libres permettent
+    # la mise à jour en temps réel du total_amount affiché.
     # ══════════════════════════════════════════════════════════
     with tab_transaction:
         st.subheader("➕ Nouvelle transaction")
@@ -1539,136 +1538,137 @@ def page_saisie():
         if df_accounts.empty:
             st.warning("Aucun compte actif trouvé.")
         else:
-            with st.form("form_transaction"):
+            col1, col2 = st.columns(2)
 
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    date_txn = st.date_input(
-                        "Date",
-                        value=pd.Timestamp.today().date(),
-                    )
-                    type_txn = st.selectbox(
-                        "Type",
-                        options=["buy", "sell", "deposit", "withdrawal", "dividend", "fee"],
-                        format_func=lambda x: {
-                            "buy":        "🟢 Achat",
-                            "sell":       "🔴 Vente",
-                            "deposit":    "💰 Dépôt",
-                            "withdrawal": "🏧 Retrait",
-                            "dividend":   "🎁 Dividende",
-                            "fee":        "💸 Frais",
-                        }[x],
-                    )
-                    account = st.selectbox(
-                        "Compte",
-                        options=df_accounts["id"].tolist(),
-                        format_func=lambda x: df_accounts.set_index("id").loc[x, "name"],
-                    )
-
-                with col2:
-                    # Asset — optionnel selon le type
-                    asset_options = [None] + df_assets["id"].tolist()
-                    asset_labels  = {None: "— (sans asset)"}
-                    asset_labels.update({
-                        row["id"]: row["name"]
-                        for _, row in df_assets.iterrows()
-                    })
-                    asset = st.selectbox(
-                        "Asset (optionnel)",
-                        options=asset_options,
-                        format_func=lambda x: asset_labels[x],
-                    )
-                    comment = st.text_input("Commentaire (optionnel)")
-
-                st.divider()
-
-                # ── Champs selon le type ────────────────────────
-                is_trade = type_txn in ("buy", "sell")
-
-                col3, col4, col5 = st.columns(3)
-
-                if is_trade:
-                    quantity = col3.number_input(
-                        "Quantité",
-                        min_value=0.0,
-                        value=1.0,
-                        step=1.0,
-                    )
-                    unit_price = col4.number_input(
-                        "Prix unitaire (€)",
-                        min_value=0.0,
-                        value=0.0,
-                        step=0.01,
-                    )
-                    fees = col5.number_input(
-                        "Frais (€)",
-                        min_value=0.0,
-                        value=0.0,
-                        step=0.01,
-                    )
-                    manual_amount = 0.0
-                else:
-                    quantity   = 0.0
-                    unit_price = 0.0
-                    fees       = 0.0
-                    manual_amount = col3.number_input(
-                        "Montant (€)",
-                        min_value=0.0,
-                        value=0.0,
-                        step=10.0,
-                        help="Montant brut, le signe sera calculé automatiquement",
-                    )
-
-                # Aperçu du total_amount calculé
-                total = compute_total_amount(
-                    type_txn, quantity, unit_price, fees, manual_amount
+            with col1:
+                date_txn = st.date_input(
+                    "Date",
+                    value=pd.Timestamp.today().date(),
+                    key="txn_date",
                 )
-                signe = "+" if total >= 0 else ""
-                st.info(
-                    f"**total_amount calculé : {signe}{total:.2f} €** "
-                    f"({'entrée' if total >= 0 else 'sortie'} d'argent dans l'enveloppe)"
+                type_txn = st.selectbox(
+                    "Type",
+                    options=["buy", "sell", "deposit", "withdrawal", "dividend", "fee"],
+                    format_func=lambda x: {
+                        "buy":        "🟢 Achat",
+                        "sell":       "🔴 Vente",
+                        "deposit":    "💰 Dépôt",
+                        "withdrawal": "🏧 Retrait",
+                        "dividend":   "🎁 Dividende",
+                        "fee":        "💸 Frais",
+                    }[x],
+                    key="txn_type",
+                )
+                account = st.selectbox(
+                    "Compte",
+                    options=df_accounts["id"].tolist(),
+                    format_func=lambda x: df_accounts.set_index("id").loc[x, "name"],
+                    key="txn_account",
                 )
 
-                submitted_txn = st.form_submit_button(
-                    "➕ Enregistrer la transaction",
-                    use_container_width=True,
+            with col2:
+                asset_options = [None] + df_assets["id"].tolist()
+                asset_labels  = {None: "— (sans asset)"}
+                asset_labels.update({
+                    row["id"]: row["name"]
+                    for _, row in df_assets.iterrows()
+                })
+                asset = st.selectbox(
+                    "Asset (optionnel)",
+                    options=asset_options,
+                    format_func=lambda x: asset_labels[x],
+                    key="txn_asset",
+                )
+                comment = st.text_input(
+                    "Commentaire (optionnel)",
+                    key="txn_comment",
                 )
 
-            if submitted_txn:
-                # Validation minimale
-                errors = []
-                if is_trade and unit_price == 0:
-                    errors.append("Le prix unitaire ne peut pas être 0 pour un achat/vente.")
-                if is_trade and quantity == 0:
-                    errors.append("La quantité ne peut pas être 0 pour un achat/vente.")
-                if not is_trade and manual_amount == 0:
-                    errors.append("Le montant ne peut pas être 0.")
+            st.divider()
 
-                if errors:
-                    for err in errors:
-                        st.error(f"❌ {err}")
-                else:
-                    try:
-                        row_data = {
-                            "date":         date_txn.isoformat(),
-                            "type":         type_txn,
-                            "account_id":   int(account),
-                            "asset_id":     int(asset) if asset is not None else None,
-                            "quantity":     quantity if is_trade else None,
-                            "unit_price":   unit_price if is_trade else None,
-                            "fees":         fees,
-                            "total_amount": round(total, 4),
-                            "comment":      comment or None,
-                        }
-                        supabase.table("transactions").insert(row_data).execute()
-                        fetch_transactions.clear()
-                        st.success(
-                            f"✅ Transaction enregistrée — "
-                            f"{type_txn.upper()} · {signe}{total:.2f} €"
-                        )
-                    except Exception as e:
-                        st.error(f"❌ Erreur lors de l'insertion : {e}")
+            # Champs selon le type — mis à jour en temps réel
+            is_trade = type_txn in ("buy", "sell")
+            col3, col4, col5 = st.columns(3)
+
+            if is_trade:
+                quantity = col3.number_input(
+                    "Quantité",
+                    min_value=0.0, value=1.0, step=1.0,
+                    key="txn_qty",
+                )
+                unit_price = col4.number_input(
+                    "Prix unitaire (€)",
+                    min_value=0.0, value=0.0, step=0.01,
+                    key="txn_price",
+                )
+                fees = col5.number_input(
+                    "Frais (€)",
+                    min_value=0.0, value=0.0, step=0.01,
+                    key="txn_fees",
+                )
+                manual_amount = 0.0
+            else:
+                quantity      = 0.0
+                unit_price    = 0.0
+                fees          = 0.0
+                manual_amount = col3.number_input(
+                    "Montant (€)",
+                    min_value=0.0, value=0.0, step=10.0,
+                    help="Montant brut, le signe est calculé automatiquement",
+                    key="txn_amount",
+                )
+
+            # Aperçu temps réel — fonctionne car hors st.form
+            total  = compute_total_amount(type_txn, quantity, unit_price, fees, manual_amount)
+            signe  = "+" if total >= 0 else ""
+            flux   = "entrée" if total >= 0 else "sortie"
+            couleur = "normal" if total >= 0 else "inverse"
+
+            st.info(
+                f"**total_amount calculé : {signe}{total:.2f} €** "
+                f"({'entrée' if total >= 0 else 'sortie'} d'argent dans l'enveloppe)"
+            )
+
+            # Validation et soumission
+            errors = []
+            if is_trade and unit_price == 0:
+                errors.append("Le prix unitaire ne peut pas être 0 pour un achat/vente.")
+            if is_trade and quantity == 0:
+                errors.append("La quantité ne peut pas être 0 pour un achat/vente.")
+            if not is_trade and manual_amount == 0:
+                errors.append("Le montant ne peut pas être 0.")
+
+            if errors:
+                for err in errors:
+                    st.warning(f"⚠️ {err}")
+
+            btn_disabled = len(errors) > 0
+            if st.button(
+                "➕ Enregistrer la transaction",
+                use_container_width=True,
+                disabled=btn_disabled,
+                key="txn_submit",
+            ):
+                try:
+                    row_data = {
+                        "date":         date_txn.isoformat(),
+                        "type":         type_txn,
+                        "account_id":   int(account),
+                        "asset_id":     int(asset) if asset is not None else None,
+                        "quantity":     quantity if is_trade else None,
+                        "unit_price":   unit_price if is_trade else None,
+                        "fees":         fees,
+                        "total_amount": round(total, 4),
+                        "comment":      comment or None,
+                    }
+                    supabase.table("transactions").insert(row_data).execute()
+                    fetch_transactions.clear()
+                    st.success(
+                        f"✅ Transaction enregistrée — "
+                        f"{type_txn.upper()} · {signe}{total:.2f} €"
+                    )
+                except Exception as e:
+                    st.error(f"❌ Erreur lors de l'insertion : {e}")
 
 
 # ============================================================
