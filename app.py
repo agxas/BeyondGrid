@@ -789,6 +789,33 @@ def compute_rebalancing_orders(
 
     return df_summary, orders, warnings_list
 
+def compute_total_amount(
+    type_: str,
+    quantity: float,
+    unit_price: float,
+    fees: float,
+    manual_amount: float,
+) -> float:
+    """
+    Calcule total_amount selon le type de transaction.
+    Conventions alignées avec snapshot.py :
+      total_amount > 0 → entrée d'argent dans l'enveloppe
+      total_amount < 0 → sortie d'argent
+    """
+    if type_ == "buy":
+        return -((quantity * unit_price) + fees)
+    elif type_ == "sell":
+        return (quantity * unit_price) - fees
+    elif type_ == "deposit":
+        return abs(manual_amount)
+    elif type_ == "withdrawal":
+        return -abs(manual_amount)
+    elif type_ == "dividend":
+        return abs(manual_amount)
+    elif type_ == "fee":
+        return -abs(manual_amount)
+    return 0.0
+
 
 # ============================================================
 # 4. PAGES
@@ -1365,7 +1392,283 @@ def page_reequilibrage():
 
 def page_saisie():
     st.title("✍️ Saisie manuelle")
-    st.info("À venir — Étape 7")
+
+    settings     = fetch_settings()
+    df_accounts  = fetch_accounts()
+    df_assets    = fetch_assets()
+
+    # 3 onglets pour séparer les 3 sections
+    tab_settings, tab_prix, tab_transaction = st.tabs([
+        "⚙️ Paramètres",
+        "💲 Prix manuels",
+        "➕ Nouvelle transaction",
+    ])
+
+    # ══════════════════════════════════════════════════════════
+    # ONGLET 1 — PARAMÈTRES
+    # ══════════════════════════════════════════════════════════
+    with tab_settings:
+        st.subheader("⚙️ Paramètres globaux")
+        st.caption("Ces valeurs sont utilisées dans les calculs FIRE, Sharpe et projection DCA.")
+
+        with st.form("form_settings"):
+            col1, col2 = st.columns(2)
+
+            with col1:
+                livret_a = st.number_input(
+                    "Taux Livret A (%)",
+                    min_value=0.0, max_value=20.0,
+                    value=float((settings.get("livret_a_rate") or 0.03) * 100),
+                    step=0.25,
+                    help="Taux annuel en %, ex : 3.0 pour 3%",
+                )
+                dca = st.number_input(
+                    "DCA mensuel (€)",
+                    min_value=0.0,
+                    value=float(settings.get("monthly_dca") or 0),
+                    step=50.0,
+                )
+                revenu = st.number_input(
+                    "Revenu mensuel (€)",
+                    min_value=0.0,
+                    value=float(settings.get("monthly_income") or 0),
+                    step=100.0,
+                    help="Utilisé pour calculer les jours de liberté financière",
+                )
+
+            with col2:
+                rendement = st.number_input(
+                    "Rendement annuel estimé (%)",
+                    min_value=0.0, max_value=50.0,
+                    value=float((settings.get("estimated_annual_return") or 0.07) * 100),
+                    step=0.5,
+                    help="Hypothèse pour la projection DCA",
+                )
+                inflation = st.number_input(
+                    "Taux d'inflation (%)",
+                    min_value=0.0, max_value=20.0,
+                    value=float((settings.get("inflation_rate") or 0.02) * 100),
+                    step=0.25,
+                )
+                fire_target = st.number_input(
+                    "Objectif FIRE (€)",
+                    min_value=0.0,
+                    value=float(settings.get("fire_target_amount") or 0),
+                    step=10000.0,
+                    help="Patrimoine cible pour atteindre l'indépendance financière",
+                )
+
+            submitted = st.form_submit_button(
+                "💾 Enregistrer les paramètres",
+                use_container_width=True,
+            )
+
+        if submitted:
+            try:
+                supabase.table("settings").upsert({
+                    "id":                      1,
+                    "livret_a_rate":           round(livret_a / 100, 4),
+                    "monthly_dca":             dca,
+                    "monthly_income":          revenu,
+                    "estimated_annual_return": round(rendement / 100, 4),
+                    "inflation_rate":          round(inflation / 100, 4),
+                    "fire_target_amount":      fire_target,
+                    "updated_at":              pd.Timestamp.now(tz="UTC").isoformat(),
+                }).execute()
+
+                # Invalider le cache pour que les autres pages voient les nouvelles valeurs
+                fetch_settings.clear()
+                st.success("✅ Paramètres enregistrés avec succès !")
+
+            except Exception as e:
+                st.error(f"❌ Erreur lors de la sauvegarde : {e}")
+
+    # ══════════════════════════════════════════════════════════
+    # ONGLET 2 — PRIX MANUELS
+    # ══════════════════════════════════════════════════════════
+    with tab_prix:
+        st.subheader("💲 Mise à jour des prix manuels")
+        st.caption("Assets avec `auto_price = FALSE` — à mettre à jour manuellement.")
+
+        df_manual = df_assets[df_assets["auto_price"] == False].copy()
+
+        if df_manual.empty:
+            st.info("Aucun asset en prix manuel dans la base.")
+        else:
+            for _, row in df_manual.iterrows():
+                aid          = int(row["id"])
+                current_price = float(row["last_known_price"] or 0)
+                last_updated  = row.get("last_price_updated_at", None)
+
+                col_name, col_price, col_date, col_btn = st.columns([3, 2, 2, 1])
+
+                col_name.markdown(f"**{row['name']}**")
+                if last_updated:
+                    try:
+                        dt = pd.to_datetime(last_updated).strftime("%d/%m/%Y")
+                    except Exception:
+                        dt = "—"
+                    col_date.caption(f"Mis à jour le {dt}")
+
+                new_price = col_price.number_input(
+                    "Prix (€)",
+                    min_value=0.0,
+                    value=current_price,
+                    step=0.01,
+                    key=f"price_{aid}",
+                    label_visibility="collapsed",
+                )
+
+                if col_btn.button("💾", key=f"save_price_{aid}", help="Enregistrer"):
+                    try:
+                        supabase.table("assets").update({
+                            "last_known_price":      new_price,
+                            "last_price_updated_at": pd.Timestamp.now(tz="UTC").isoformat(),
+                        }).eq("id", aid).execute()
+                        fetch_assets.clear()
+                        st.success(f"✅ Prix de **{row['name']}** mis à jour : {new_price:.2f} €")
+                    except Exception as e:
+                        st.error(f"❌ Erreur : {e}")
+
+    # ══════════════════════════════════════════════════════════
+    # ONGLET 3 — NOUVELLE TRANSACTION
+    # ══════════════════════════════════════════════════════════
+    with tab_transaction:
+        st.subheader("➕ Nouvelle transaction")
+
+        if df_accounts.empty:
+            st.warning("Aucun compte actif trouvé.")
+        else:
+            with st.form("form_transaction"):
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    date_txn = st.date_input(
+                        "Date",
+                        value=pd.Timestamp.today().date(),
+                    )
+                    type_txn = st.selectbox(
+                        "Type",
+                        options=["buy", "sell", "deposit", "withdrawal", "dividend", "fee"],
+                        format_func=lambda x: {
+                            "buy":        "🟢 Achat",
+                            "sell":       "🔴 Vente",
+                            "deposit":    "💰 Dépôt",
+                            "withdrawal": "🏧 Retrait",
+                            "dividend":   "🎁 Dividende",
+                            "fee":        "💸 Frais",
+                        }[x],
+                    )
+                    account = st.selectbox(
+                        "Compte",
+                        options=df_accounts["id"].tolist(),
+                        format_func=lambda x: df_accounts.set_index("id").loc[x, "name"],
+                    )
+
+                with col2:
+                    # Asset — optionnel selon le type
+                    asset_options = [None] + df_assets["id"].tolist()
+                    asset_labels  = {None: "— (sans asset)"}
+                    asset_labels.update({
+                        row["id"]: row["name"]
+                        for _, row in df_assets.iterrows()
+                    })
+                    asset = st.selectbox(
+                        "Asset (optionnel)",
+                        options=asset_options,
+                        format_func=lambda x: asset_labels[x],
+                    )
+                    comment = st.text_input("Commentaire (optionnel)")
+
+                st.divider()
+
+                # ── Champs selon le type ────────────────────────
+                is_trade = type_txn in ("buy", "sell")
+
+                col3, col4, col5 = st.columns(3)
+
+                if is_trade:
+                    quantity = col3.number_input(
+                        "Quantité",
+                        min_value=0.0,
+                        value=1.0,
+                        step=1.0,
+                    )
+                    unit_price = col4.number_input(
+                        "Prix unitaire (€)",
+                        min_value=0.0,
+                        value=0.0,
+                        step=0.01,
+                    )
+                    fees = col5.number_input(
+                        "Frais (€)",
+                        min_value=0.0,
+                        value=0.0,
+                        step=0.01,
+                    )
+                    manual_amount = 0.0
+                else:
+                    quantity   = 0.0
+                    unit_price = 0.0
+                    fees       = 0.0
+                    manual_amount = col3.number_input(
+                        "Montant (€)",
+                        min_value=0.0,
+                        value=0.0,
+                        step=10.0,
+                        help="Montant brut, le signe sera calculé automatiquement",
+                    )
+
+                # Aperçu du total_amount calculé
+                total = compute_total_amount(
+                    type_txn, quantity, unit_price, fees, manual_amount
+                )
+                signe = "+" if total >= 0 else ""
+                st.info(
+                    f"**total_amount calculé : {signe}{total:.2f} €** "
+                    f"({'entrée' if total >= 0 else 'sortie'} d'argent dans l'enveloppe)"
+                )
+
+                submitted_txn = st.form_submit_button(
+                    "➕ Enregistrer la transaction",
+                    use_container_width=True,
+                )
+
+            if submitted_txn:
+                # Validation minimale
+                errors = []
+                if is_trade and unit_price == 0:
+                    errors.append("Le prix unitaire ne peut pas être 0 pour un achat/vente.")
+                if is_trade and quantity == 0:
+                    errors.append("La quantité ne peut pas être 0 pour un achat/vente.")
+                if not is_trade and manual_amount == 0:
+                    errors.append("Le montant ne peut pas être 0.")
+
+                if errors:
+                    for err in errors:
+                        st.error(f"❌ {err}")
+                else:
+                    try:
+                        row_data = {
+                            "date":         date_txn.isoformat(),
+                            "type":         type_txn,
+                            "account_id":   int(account),
+                            "asset_id":     int(asset) if asset is not None else None,
+                            "quantity":     quantity if is_trade else None,
+                            "unit_price":   unit_price if is_trade else None,
+                            "fees":         fees,
+                            "total_amount": round(total, 4),
+                            "comment":      comment or None,
+                        }
+                        supabase.table("transactions").insert(row_data).execute()
+                        fetch_transactions.clear()
+                        st.success(
+                            f"✅ Transaction enregistrée — "
+                            f"{type_txn.upper()} · {signe}{total:.2f} €"
+                        )
+                    except Exception as e:
+                        st.error(f"❌ Erreur lors de l'insertion : {e}")
 
 
 # ============================================================
