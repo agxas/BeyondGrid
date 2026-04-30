@@ -39,6 +39,18 @@ PATCH_NOTES = {
     ],
 }
 
+# ============================================================
+# LIENS PRIX MANUELS
+# Mapping ISIN → URL de la page de cours.
+# Pour les ETFs, justETF est généré automatiquement depuis l'ISIN.
+# Renseigner ici les fonds OPCVM sans lien automatique possible.
+# ============================================================
+PRICE_LINKS: dict[str, str] = {
+    # Exemples — remplace par tes ISINs et URLs :
+    # "LU0292095535": "https://www.justetf.com/fr/etf-profile.html?isin=LU0292095535#apercu",
+    # "FR0010149203": "https://www.boursorama.com/bourse/opcvm/cours/0P0001DKPM/",
+}
+
 @st.cache_resource
 def init_db():
     return create_client(
@@ -1511,7 +1523,20 @@ def page_saisie():
                 last_updated  = row.get("last_price_updated_at", None)
 
                 col_name, col_price, col_date, col_btn = st.columns([3, 2, 2, 1])
-                col_name.markdown(f"**{row['name']}**")
+
+                # Lien vers la page de cours selon le type d'asset et l'ISIN
+                isin       = row.get("isin") or ""
+                asset_cls  = row.get("asset_class") or ""
+                if isin and asset_cls in ("etf", "fonds"):
+                    url = PRICE_LINKS.get(
+                        isin,
+                        f"https://www.justetf.com/fr/etf-profile.html?isin={isin}#apercu",
+                    )
+                    col_name.markdown(f"**{row['name']}** — [📊 Voir le cours]({url})")
+                elif isin and isin in PRICE_LINKS:
+                    col_name.markdown(f"**{row['name']}** — [📊 Voir le cours]({PRICE_LINKS[isin]})")
+                else:
+                    col_name.markdown(f"**{row['name']}**")
 
                 if last_updated:
                     try:
@@ -1599,12 +1624,19 @@ def page_saisie():
 
             st.divider()
 
-            # Prix par défaut selon l'asset sélectionné
+            # FIX prix unitaire : détecter le changement d'asset et
+            # mettre à jour le session_state AVANT le rendu du widget.
+            # Sans ça, Streamlit ignore le paramètre value après le 1er rendu.
             default_price = 0.0
             if asset is not None:
                 asset_row = df_assets[df_assets["id"] == asset]
                 if not asset_row.empty:
                     default_price = float(asset_row.iloc[0].get("last_known_price") or 0.0)
+
+            prev_asset_key = "txn_prev_asset"
+            if st.session_state.get(prev_asset_key) != asset:
+                st.session_state["txn_price"] = default_price
+                st.session_state[prev_asset_key] = asset
 
             # Champs selon le type — mis à jour en temps réel
             is_trade = type_txn in ("buy", "sell")
