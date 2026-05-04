@@ -154,10 +154,7 @@ Un workflow GitHub Actions permet de :
 
 ## 🎯 Roadmap
 
-- [ ] Intégration API broker
 - [ ] Graphiques avancés
-- [ ] Comparaison avec benchmarks
-- [ ] Authentification multi-utilisateur
 - [ ] Interface UI améliorée
 
 ---
@@ -180,7 +177,7 @@ MIT
 ## 👤 Auteur
 
 **Nathan Ramboz**  
-Chargé du support systèmes, réseaux et télécoms  
+Chargé de support systèmes, réseaux et télécoms  
 
 GitHub : https://github.com/agxas
 
