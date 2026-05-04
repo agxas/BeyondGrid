@@ -964,21 +964,15 @@ def compute_rebalancing_orders(
 
     return df_summary, orders, warnings_list
 
-def compute_allocation(df_positions: pd.DataFrame, df_assets: pd.DataFrame):
+def compute_allocation(df_positions: pd.DataFrame):
     """
     Retourne la répartition par classe d'actifs et géographie
     """
-    if df_positions.empty or df_assets.empty:
+    if df_positions.empty:
         return pd.DataFrame(), pd.DataFrame()
 
-    df = df_positions.merge(
-        df_assets[["id", "asset_class", "geography"]],
-        left_on="asset_id",
-        right_on="id",
-        how="left"
-    )
+    df = df_positions.copy()
 
-    # fallback si valeurs nulles
     df["asset_class"] = df["asset_class"].fillna("Autre")
     df["geography"] = df["geography"].fillna("Autre")
 
@@ -1029,6 +1023,33 @@ def compute_global_positions(df_txn: pd.DataFrame, df_assets: pd.DataFrame) -> p
     df_pos["value"] = df_pos["quantity"] * df_pos["last_known_price"]
 
     return df_pos.reset_index(drop=True)
+
+def compute_total_amount(
+    type_: str,
+    quantity: float,
+    unit_price: float,
+    fees: float,
+    manual_amount: float,
+) -> float:
+    """
+    Calcule total_amount selon le type de transaction.
+    Conventions alignées avec snapshot.py :
+      total_amount > 0 → entrée d'argent dans l'enveloppe
+      total_amount < 0 → sortie d'argent
+    """
+    if type_ == "buy":
+        return -((quantity * unit_price) + fees)
+    elif type_ == "sell":
+        return (quantity * unit_price) - fees
+    elif type_ == "deposit":
+        return abs(manual_amount)
+    elif type_ == "withdrawal":
+        return -abs(manual_amount)
+    elif type_ == "dividend":
+        return abs(manual_amount)
+    elif type_ == "fee":
+        return -abs(manual_amount)
+    return 0.0
 
 
 
@@ -1537,7 +1558,7 @@ def page_reequilibrage():
     st.divider()
     st.subheader("📊 Répartition du portefeuille")
     
-    by_class, by_geo = compute_allocation(df_positions, df_assets)
+    by_class, by_geo = compute_allocation(df_positions)
     
     col1, col2 = st.columns(2)
     
@@ -1714,34 +1735,6 @@ def page_reequilibrage():
                 f"Marge : +{total_saisir - total_reel:.2f} €",
                 delta_color="off",
             )
-
-
-def compute_total_amount(
-    type_: str,
-    quantity: float,
-    unit_price: float,
-    fees: float,
-    manual_amount: float,
-) -> float:
-    """
-    Calcule total_amount selon le type de transaction.
-    Conventions alignées avec snapshot.py :
-      total_amount > 0 → entrée d'argent dans l'enveloppe
-      total_amount < 0 → sortie d'argent
-    """
-    if type_ == "buy":
-        return -((quantity * unit_price) + fees)
-    elif type_ == "sell":
-        return (quantity * unit_price) - fees
-    elif type_ == "deposit":
-        return abs(manual_amount)
-    elif type_ == "withdrawal":
-        return -abs(manual_amount)
-    elif type_ == "dividend":
-        return abs(manual_amount)
-    elif type_ == "fee":
-        return -abs(manual_amount)
-    return 0.0
 
 
 def page_saisie():
