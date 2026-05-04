@@ -263,6 +263,21 @@ def filter_by_period(df: pd.DataFrame, periode: str) -> pd.DataFrame:
     cutoff = periode_map.get(periode, df["date"].min())
     return df[df["date"] >= cutoff]
 
+def get_period_start(df: pd.DataFrame, months: int) -> pd.Timestamp:
+    """
+    Retourne la date de début correspondant à X mois en arrière.
+    """
+    if df.empty:
+        return pd.Timestamp.min
+    return df["date"].max() - pd.DateOffset(months=months)
+
+
+def safe_value(x: float | None, default: float = 0.0) -> float:
+    """
+    Convertit None en valeur par défaut pour affichage UI.
+    """
+    return x if x is not None else default
+
 
 def compute_kpis(df_snap: pd.DataFrame) -> dict:
     """
@@ -297,8 +312,7 @@ def compute_perf_over_period(df_snap: pd.DataFrame, months: int) -> float:
     if df_snap.empty or len(df_snap) < 2:
         return 0.0
 
-    latest_date = df_snap["date"].max()
-    start_date = latest_date - pd.DateOffset(months=months)
+    start_date = get_period_start(df_snap, months)
 
     df_period = df_snap[df_snap["date"] >= start_date]
 
@@ -320,8 +334,7 @@ def compute_perf_value_over_period(df_snap: pd.DataFrame, months: int) -> float:
     if df_snap.empty or len(df_snap) < 2:
         return 0.0
 
-    latest_date = df_snap["date"].max()
-    start_date = latest_date - pd.DateOffset(months=months)
+    start_date = get_period_start(df_snap, months)
 
     df_period = df_snap[df_snap["date"] >= start_date]
 
@@ -340,8 +353,7 @@ def compute_sparkline(df_snap: pd.DataFrame, months: int) -> str:
     if df_snap.empty or len(df_snap) < 2:
         return ""
 
-    latest_date = df_snap["date"].max()
-    start_date = latest_date - pd.DateOffset(months=months)
+    start_date = get_period_start(df_snap, months)
 
     df_period = df_snap[df_snap["date"] >= start_date]
 
@@ -1101,8 +1113,9 @@ def compute_accounts_evolution(df_snap_acc: pd.DataFrame) -> pd.DataFrame:
 def page_vue_globale():
     st.title("📊 Synthèse du Patrimoine")
 
-    df_snap  = fetch_snapshots_agg()
-    settings = fetch_settings()
+    with st.spinner("Chargement des données..."):
+        df_snap  = fetch_snapshots_agg()
+        settings = fetch_settings()
 
     if df_snap.empty:
         st.warning("Aucun snapshot disponible. Lance le script de snapshot pour commencer.")
@@ -1214,10 +1227,10 @@ def page_vue_globale():
     st.divider()
     st.subheader("📊 Allocation globale")
     
-    df_txn = fetch_transactions()
-    df_assets = fetch_assets()
-    
-    df_positions_global = compute_global_positions(df_txn, df_assets)
+    with st.spinner("Calcul de l'allocation..."):
+        df_txn = fetch_transactions()
+        df_assets = fetch_assets()
+        df_positions_global = compute_global_positions(df_txn, df_assets)
     
     if not df_positions_global.empty:
     
@@ -1349,8 +1362,9 @@ def page_vue_globale():
 def page_analyses():
     st.title("📊 Analyses & Graphiques")
 
-    df_snap  = fetch_snapshots_agg()
-    settings = fetch_settings()
+    with st.spinner("Chargement des données..."):
+        df_snap  = fetch_snapshots_agg()
+        settings = fetch_settings()
 
     if df_snap.empty:
         st.warning("Aucun snapshot disponible.")
@@ -1389,6 +1403,9 @@ def page_analyses():
     else:
         volatility = compute_volatility(df_filtered)
         sharpe     = compute_sharpe(df_filtered, risk_free_rate)
+        
+        volatility_display = safe_value(volatility)
+        sharpe_display     = safe_value(sharpe)
 
         sharpe_label = (
             "🟢 Excellent"  if sharpe >= 2  else
@@ -1403,8 +1420,8 @@ def page_analyses():
         )
 
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Ratio de Sharpe", f"{sharpe:.2f}", sharpe_label, delta_color="off")
-        col2.metric("Volatilité annualisée", f"{volatility:.1f} %", vol_label, delta_color="off")
+        col1.metric("Ratio de Sharpe", f"{sharpe_display:.2f}", sharpe_label, delta_color="off")
+        col2.metric("Volatilité annualisée", f"{volatility_display:.1f} %", vol_label, delta_color="off")
         col3.metric("Taux sans risque (Livret A)", f"{risk_free_rate * 100:.1f} %")
         col4.metric("Nb jours analysés", f"{len(df_filtered)}")
 
