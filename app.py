@@ -1881,6 +1881,83 @@ def page_saisie():
                 except Exception as e:
                     st.error(f"❌ Erreur lors de l'insertion : {e}")
 
+def page_transactions():
+    st.title("🧾 Historique des transactions")
+
+    df_txn = fetch_transactions()
+    df_accounts = fetch_accounts()
+
+    if df_txn.empty:
+        st.info("Aucune transaction enregistrée.")
+        return
+
+    # ── Filtres ───────────────────────────────────────────────
+    st.subheader("Filtres")
+
+    col1, col2, col3 = st.columns(3)
+
+    # Compte
+    account_filter = col1.selectbox(
+        "Compte",
+        options=["Tous"] + df_accounts["name"].tolist(),
+    )
+
+    # Type
+    type_filter = col2.selectbox(
+        "Type",
+        options=["Tous"] + sorted(df_txn["type"].unique().tolist()),
+    )
+
+    # Date range
+    date_min = df_txn["date"].min().date()
+    date_max = df_txn["date"].max().date()
+
+    date_range = col3.date_input(
+        "Période",
+        value=(date_min, date_max),
+    )
+
+    # ── Filtrage ──────────────────────────────────────────────
+    df_filtered = df_txn.copy()
+
+    if account_filter != "Tous":
+        account_id = df_accounts[df_accounts["name"] == account_filter]["id"].iloc[0]
+        df_filtered = df_filtered[df_filtered["account_id"] == account_id]
+
+    if type_filter != "Tous":
+        df_filtered = df_filtered[df_filtered["type"] == type_filter]
+
+    if len(date_range) == 2:
+        df_filtered = df_filtered[
+            (df_filtered["date"] >= pd.to_datetime(date_range[0])) &
+            (df_filtered["date"] <= pd.to_datetime(date_range[1]))
+        ]
+
+    # ── Mise en forme ─────────────────────────────────────────
+    df_display = df_filtered.copy()
+
+    df_display["date"] = df_display["date"].dt.strftime("%d/%m/%Y")
+    df_display["total_amount"] = df_display["total_amount"].map(fmt_eur)
+
+    # mapping comptes
+    account_map = df_accounts.set_index("id")["name"].to_dict()
+    df_display["account"] = df_display["account_id"].map(account_map)
+
+    df_display = df_display[[
+        "date",
+        "account",
+        "type",
+        "asset_id",
+        "quantity",
+        "unit_price",
+        "fees",
+        "total_amount",
+        "comment",
+    ]]
+
+    st.dataframe(df_display, use_container_width=True, hide_index=True)
+
+
 
 # ============================================================
 # 5. ROUTING
@@ -1903,6 +1980,7 @@ menu = st.sidebar.radio(
         "Analyses & Graphiques",
         "Rééquilibrage PEA",
         "Saisie manuelle",
+        "Transactions",
     ],
     format_func=lambda x: {
         "Vue Globale":           "🏠 Vue Globale",
@@ -1920,6 +1998,9 @@ elif menu == "Rééquilibrage PEA":
     page_reequilibrage()
 elif menu == "Saisie manuelle":
     page_saisie()
+elif menu == "Transactions":
+    page_transactions()
+
 
 # ── Version en bas de sidebar ──────────────────────────────
 st.sidebar.divider()
