@@ -971,22 +971,16 @@ def page_vue_globale():
 
     def render_perf(label, perf, value):
         color = "#2ECC71" if perf >= 0 else "#E84C4C"
-        return f"""
-        <div style="
-            text-align:center;
-            padding:10px;
-            border-radius:10px;
-            background-color:#f8f9fa;
-        ">
-            <div style="font-size:13px;color:#888">{label}</div>
-            <div style="font-size:22px;font-weight:600;color:{color}">
-                {trend_icon(perf)} {fmt_pct(perf)}
-            </div>
-            <div style="font-size:14px;color:#555">
-                {fmt_eur(value)}
-            </div>
+        
+    return f"""
+    <div style="text-align:center">
+        <div style="font-size:14px;color:#888">{label}</div>
+        <div style="font-size:22px;font-weight:600;color:{color}">
+            {trend_icon(perf)} {fmt_pct(perf)} ({fmt_eur(value)})
         </div>
-        """
+    </div>
+    """
+
     
     col1.markdown(render_perf("1 mois", perf_1m, val_1m), unsafe_allow_html=True)
     col2.markdown(render_perf("3 mois", perf_3m, val_3m), unsafe_allow_html=True)
