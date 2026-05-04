@@ -111,6 +111,17 @@ def trend_icon(value: float) -> str:
     return "⚪"
 
 
+def display_kpi(label: str, value: str, delta: str | None = None):
+    """
+    Wrapper simple autour de st.metric pour homogénéiser l'affichage des KPIs.
+    """
+    st.metric(
+        label=label,
+        value=value,
+        delta=delta,
+    )
+
+
 # Options de période partagées entre toutes les pages
 PERIODE_OPTIONS  = ["1 mois", "3 mois", "6 mois", "1 an", "3 ans", "Tout"]
 PERIODE_DEFAULT  = "1 an"   # index calculé dynamiquement depuis la liste
@@ -1128,24 +1139,30 @@ def page_vue_globale():
     st.subheader("Situation actuelle")
     col1, col2, col3, col4 = st.columns(4)
 
-    col1.metric(
-        "Valeur totale",
-        fmt_eur(kpis["total_value"]),
-    )
-    col2.metric(
-        "Capital investi",
-        fmt_eur(kpis["invested_capital"]),
-    )
-    col3.metric(
-        "Plus-value latente",
-        fmt_eur(kpis["plus_value"]),
-        fmt_pct(kpis["perf_pct"]),
-        delta_color=color_metric(kpis["perf_pct"]),
-    )
-    col4.metric(
-        "Cash disponible",
-        fmt_eur(kpis["cash"]),
-    )
+    with col1:
+        display_kpi(
+            "Valeur totale",
+            fmt_eur(kpis["total_value"]),
+        )
+    
+    with col2:
+        display_kpi(
+            "Capital investi",
+            fmt_eur(kpis["invested_capital"]),
+        )
+    
+    with col3:
+        display_kpi(
+            "Plus-value latente",
+            fmt_eur(kpis["plus_value"]),
+            fmt_pct(kpis["perf_pct"]),
+        )
+    
+    with col4:
+        display_kpi(
+            "Cash disponible",
+            fmt_eur(kpis["cash"]),
+        )
 
     st.divider()
 
@@ -1207,14 +1224,17 @@ def page_vue_globale():
 
     col_f1, col_f2, col_f3 = st.columns(3)
 
-    col_f1.metric(
-        "Revenu passif mensuel (4%)",
-        f"{fmt_eur(fire['passive_income_monthly'])}/mois",
-    )
-    col_f2.metric(
-        "Revenu passif annuel (4%)",
-        f"{fmt_eur(fire['passive_income_annual'])}/an",
-    )
+    with col_f1:
+        display_kpi(
+            "Revenu passif mensuel (4%)",
+            f"{fmt_eur(fire['passive_income_monthly'])}/mois",
+        )
+    
+    with col_f2:
+        display_kpi(
+            "Revenu passif annuel (4%)",
+            f"{fmt_eur(fire['passive_income_annual'])}/an",
+        )
     if fire["freedom_days"] is not None:
         col_f3.metric(
             "Jours de liberté financière",
@@ -1420,10 +1440,31 @@ def page_analyses():
         )
 
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Ratio de Sharpe", f"{sharpe_display:.2f}", sharpe_label, delta_color="off")
-        col2.metric("Volatilité annualisée", f"{volatility_display:.1f} %", vol_label, delta_color="off")
-        col3.metric("Taux sans risque (Livret A)", f"{risk_free_rate * 100:.1f} %")
-        col4.metric("Nb jours analysés", f"{len(df_filtered)}")
+        with col1:
+            display_kpi(
+                "Ratio de Sharpe",
+                f"{sharpe_display:.2f}",
+                sharpe_label,
+            )
+        
+        with col2:
+            display_kpi(
+                "Volatilité annualisée",
+                f"{volatility_display:.1f} %",
+                vol_label,
+            )
+        
+        with col3:
+            display_kpi(
+                "Taux sans risque (Livret A)",
+                f"{risk_free_rate * 100:.1f} %",
+            )
+        
+        with col4:
+            display_kpi(
+                "Nb jours analysés",
+                f"{len(df_filtered)}",
+            )
 
     with st.expander("💡 Comment lire ces indicateurs ?"):
         st.markdown("""
