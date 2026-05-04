@@ -1262,7 +1262,7 @@ def page_vue_globale():
     fig = compute_perf_chart(df_filtered)
     st.plotly_chart(fig, use_container_width=True)
 
-    # ── Vue par compte ─────────────────────────────
+   # ── Vue par compte ─────────────────────────────
     st.subheader("🏦 Évolution par compte")
     
     df_snap_acc = fetch_snapshots_by_account()
@@ -1270,48 +1270,41 @@ def page_vue_globale():
     
     if not df_acc_evo.empty:
     
+        cols = st.columns(len(df_acc_evo.columns))
+    
+        for i, col_name in enumerate(df_acc_evo.columns):
+            value = df_acc_evo[col_name].iloc[-1]
+            cols[i].metric(col_name, fmt_eur(value))
+    
         fig_acc = go.Figure()
     
-        for col in df_acc_evo.columns:
+        colors = ["#4C9BE8", "#2ECC71", "#F5A623", "#9B59B6"]
+    
+        for i, col in enumerate(df_acc_evo.columns):
             fig_acc.add_trace(go.Scatter(
                 x=df_acc_evo.index,
                 y=df_acc_evo[col],
                 mode="lines",
-                name=col
+                name=col,
+                line=dict(color=colors[i % len(colors)])
             ))
     
         fig_acc.update_layout(
             height=400,
             margin=dict(l=0, r=0, t=30, b=0),
             hovermode="x unified",
+            showlegend=True,
             xaxis=dict(showgrid=False),
             yaxis=dict(
                 ticksuffix=" €",
                 tickformat=",.0f",
                 gridcolor="#f0f0f0"
             ),
-            legend=dict(
-                orientation="h",
-                y=1.02,
-                x=0
-            ),
+            legend=dict(orientation="h", y=1.02, x=0),
             plot_bgcolor="white",
             paper_bgcolor="rgba(0,0,0,0)",
         )
-        
-        
-        cols = st.columns(len(df_acc_evo.columns))
-        
-        colors = ["#4C9BE8", "#2ECC71", "#F5A623", "#9B59B6"]
-
-        for i, col in enumerate(df_acc_evo.columns):
-            fig_acc.add_trace(go.Scatter(
-                x=df_acc_evo.index,
-                y=df_acc_evo[col],
-                name=col,
-                line=dict(color=colors[i % len(colors)])
-            ))
-
+    
         st.plotly_chart(fig_acc, use_container_width=True)
     
     else:
