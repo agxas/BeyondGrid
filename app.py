@@ -1521,12 +1521,14 @@ def page_analyses():
         format_perf(perf_livret),
         delta_color="off",
     )
-    col3.metric(
-        "Écart (alpha vs Livret A)",
-        format_perf(ecart),
-        "✅ Tu bats le Livret A" if ecart >= 0 else "⚠️ Sous le Livret A",
-        delta_color="off",
-    )
+    with col3:
+        display_kpi(
+            "Écart (alpha vs Livret A)",
+            format_perf(ecart),
+            ecart,
+            is_percent=True,
+        )
+        st.caption("✅ Tu bats le Livret A" if ecart >= 0 else "⚠️ Sous le Livret A")
 
     st.plotly_chart(fig_la, use_container_width=True)
 
@@ -1572,12 +1574,14 @@ def page_analyses():
                 f"{perf_bench:+.2f} %",
                 delta_color="off",
             )
-            col3.metric(
-                "Alpha généré",
-                f"{ecart:+.2f} %",
-                "✅ Tu bats le benchmark" if ecart >= 0 else "⚠️ Sous le benchmark",
-                delta_color="off",
-            )
+            with col3:
+                display_kpi(
+                    "Alpha généré",
+                    f"{ecart:+.2f} %",
+                    ecart,
+                    is_percent=True,
+                )
+                st.caption("✅ Tu bats le benchmark" if ecart >= 0 else "⚠️ Sous le benchmark")
         else:
             col2.warning("Données benchmark indisponibles")
 
@@ -1633,6 +1637,7 @@ def page_analyses():
         val_finale_reel = reel[-1]
         capital_final   = capital[-1]
         gain_total      = val_finale_nom - capital_final
+        gain_pct = (gain_total / capital_final * 100) if capital_final > 0 else 0
 
         col1, col2, col3, col4 = st.columns(4)
         col1.metric(
@@ -1647,12 +1652,16 @@ def page_analyses():
             "Capital total investi",
             fmt_eur(capital_final),
         )
-        col4.metric(
-            "Gain généré par les intérêts",
-            fmt_eur(gain_total),
-            f"{(gain_total / capital_final * 100):+.0f} % du capital",
-            delta_color="off",
-        )
+        
+        with col4:
+            display_kpi(
+                "Gain généré par les intérêts",
+                fmt_eur(gain_total),
+                gain_pct,
+                is_percent=True,
+            )
+            st.caption(f"{gain_pct:+.0f}% du capital")
+
 
         # Ligne FIRE sur le graphique si target définie
         if fire_target > 0:
