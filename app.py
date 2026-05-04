@@ -1058,6 +1058,23 @@ def compute_total_amount(
         return -abs(manual_amount)
     return 0.0
 
+def compute_accounts_evolution(df_snap_acc: pd.DataFrame) -> pd.DataFrame:
+    """
+    Pivot pour avoir une colonne par compte avec la valeur totale
+    """
+    if df_snap_acc.empty:
+        return pd.DataFrame()
+
+    df = df_snap_acc.copy()
+
+    df_pivot = df.pivot_table(
+        index="date",
+        columns="account_name",
+        values="total_value",
+        aggfunc="sum"
+    ).sort_index()
+
+    return df_pivot
 
 
 # ============================================================
@@ -1228,6 +1245,48 @@ def page_vue_globale():
 
     # ── Graphique valeur vs capital ────────────────────────────
     st.subheader("📈 Évolution du patrimoine")
+
+    # ── Vue par compte ─────────────────────────────
+    st.subheader("🏦 Évolution par compte")
+    
+    df_snap_acc = fetch_snapshots_by_account()
+    df_acc_evo = compute_accounts_evolution(df_snap_acc)
+    
+    if not df_acc_evo.empty:
+    
+        fig_acc = go.Figure()
+    
+        for col in df_acc_evo.columns:
+            fig_acc.add_trace(go.Scatter(
+                x=df_acc_evo.index,
+                y=df_acc_evo[col],
+                mode="lines",
+                name=col
+            ))
+    
+        fig_acc.update_layout(
+            height=400,
+            margin=dict(l=0, r=0, t=30, b=0),
+            hovermode="x unified",
+            xaxis=dict(showgrid=False),
+            yaxis=dict(
+                ticksuffix=" €",
+                tickformat=",.0f",
+                gridcolor="#f0f0f0"
+            ),
+            legend=dict(
+                orientation="h",
+                y=1.02,
+                x=0
+            ),
+            plot_bgcolor="white",
+            paper_bgcolor="rgba(0,0,0,0)",
+        )
+    
+        st.plotly_chart(fig_acc, use_container_width=True)
+    
+    else:
+        st.info("Pas de données par compte disponibles.")
 
     col_period, _ = st.columns([2, 5])
     with col_period:
