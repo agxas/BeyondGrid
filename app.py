@@ -97,12 +97,6 @@ def fmt_pct(x: float) -> str:
     return f"{x:+.2f} %"
 
 
-def color_metric(value: float) -> str:
-    """
-    Retourne 'normal' (vert) ou 'inverse' (rouge) pour Streamlit.
-    """
-    return "normal" if value >= 0 else "inverse"
-
 def trend_icon(value: float) -> str:
     if value > 0:
         return "🟢"
@@ -111,14 +105,27 @@ def trend_icon(value: float) -> str:
     return "⚪"
 
 
-def display_kpi(label: str, value: str, delta: str | None = None):
+def display_kpi(label: str, value: str, delta: float | None = None, is_percent: bool = False):
     """
-    Wrapper simple autour de st.metric pour homogénéiser l'affichage des KPIs.
+    KPI homogène avec :
+    - flèche directionnelle
+    - formatage automatique
     """
+
+    delta_display = None
+
+    if delta is not None:
+        icon = "▲" if delta > 0 else "▼" if delta < 0 else "•"
+
+        if is_percent:
+            delta_display = f"{icon} {delta:+.2f}%"
+        else:
+            delta_display = f"{icon} {delta:+,.0f} €".replace(",", " ")
+
     st.metric(
         label=label,
         value=value,
-        delta=delta,
+        delta=delta_display,
     )
 
 
@@ -1155,7 +1162,8 @@ def page_vue_globale():
         display_kpi(
             "Plus-value latente",
             fmt_eur(kpis["plus_value"]),
-            fmt_pct(kpis["perf_pct"]),
+            kpis["perf_pct"],
+            is_percent=True,
         )
     
     with col4:
@@ -1367,7 +1375,8 @@ def page_vue_globale():
         dd_label = "🔴 Sévère"
 
     col_dd1, col_dd2, _ = st.columns([1, 1, 5])
-    col_dd1.metric("Pire drawdown", f"{max_dd:.1f} %")
+    with col_dd1:
+        display_kpi("Pire drawdown", f"{max_dd:.1f} %")
     col_dd2.metric("Niveau de risque", dd_label)
 
     st.plotly_chart(fig_dd, use_container_width=True)
@@ -1444,15 +1453,16 @@ def page_analyses():
             display_kpi(
                 "Ratio de Sharpe",
                 f"{sharpe_display:.2f}",
-                sharpe_label,
             )
+            st.caption(sharpe_label)
         
         with col2:
             display_kpi(
                 "Volatilité annualisée",
                 f"{volatility_display:.1f} %",
-                vol_label,
             )
+            st.caption(vol_label)
+
         
         with col3:
             display_kpi(
