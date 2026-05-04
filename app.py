@@ -31,8 +31,14 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "1.6"
+APP_VERSION = "1.7"
 PATCH_NOTES = {
+    "1.7": [
+        "Refonte de l’affichage de la performance par compte",
+        "Simplification des KPIs (suppression des couleurs Streamlit intrusives)",
+        "Ajout d’une ligne synthétique combinant performance %, plus-value € et poids du compte",
+        "Amélioration de la lisibilité globale du dashboard",
+    ],
     "1.6": [
         "Ajout de l’allocation globale multi-comptes",
         "Visualisation de la répartition patrimoniale (classe d’actifs et géographie)",
@@ -1305,7 +1311,7 @@ def page_vue_globale():
     
             pct = (current / total * 100) if total > 0 else 0
     
-            icon = "🟢" if perf_pct > 0 else "🔴" if perf_pct < 0 else "⚪"
+            icon = "▲" if perf_pct > 0 else "▼" if perf_pct < 0 else "•"
 
             cols[i].metric(
                 col_name,
