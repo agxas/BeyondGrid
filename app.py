@@ -1305,8 +1305,6 @@ def page_vue_globale():
                 delta=f"{perf_pct:+.2f} %",
                 delta_color="normal" if perf_pct >= 0 else "inverse"
             )
-            
-            cols[i].caption(f"{fmt_eur(perf_val)}")
 
         
         # ✅ UNE SEULE boucle pour les %
