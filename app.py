@@ -1305,7 +1305,7 @@ def page_vue_globale():
     
             pct = (current / total * 100) if total > 0 else 0
     
-            # ✅ FIX couleur : delta DOIT être un float
+            # ✅ metric (couleur OK car float)
             cols[i].metric(
                 col_name,
                 fmt_eur(current),
@@ -1313,11 +1313,16 @@ def page_vue_globale():
                 delta_color="normal" if perf_pct >= 0 else "inverse"
             )
     
-            # ✅ ligne custom propre (remplace ton ancien delta_text)
+            # ✅ ✅ HTML COMPLET (corrigé)
             cols[i].markdown(
                 f"""
                 <div style='text-align:center; font-size:13px; margin-top:-6px'>
                     {perf_pct:+.2f}% • {fmt_eur(perf_val)}<br>
+                    <span style='color:#888'>{pct:.1f}% du patrimoine</span>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
 
 
     # ── Drawdown ───────────────────────────────────────────────
