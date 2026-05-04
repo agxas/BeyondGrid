@@ -1297,17 +1297,16 @@ def page_vue_globale():
         
             perf_pct = ((current / start) - 1) * 100 if start > 0 else 0
             perf_val = current - start
-        
+           
+            delta_text = (
+                f"{perf_pct:+.2f}% · {fmt_eur(perf_val)}"
+            )
             
             cols[i].metric(
                 col_name,
                 fmt_eur(current),
-                delta=round(perf_pct, 2),
+                delta=delta_text,
                 delta_color="normal" if perf_pct >= 0 else "inverse"
-            )
-            
-            cols[i].caption(
-                f"{'🟢' if perf_pct >= 0 else '🔴'} {perf_pct:+.2f}% · {fmt_eur(perf_val)}"
             )
 
 
