@@ -1059,9 +1059,6 @@ def compute_total_amount(
     return 0.0
 
 def compute_accounts_evolution(df_snap_acc: pd.DataFrame) -> pd.DataFrame:
-    """
-    Pivot pour avoir une colonne par compte avec la valeur totale
-    """
     if df_snap_acc.empty:
         return pd.DataFrame()
 
@@ -1074,7 +1071,12 @@ def compute_accounts_evolution(df_snap_acc: pd.DataFrame) -> pd.DataFrame:
         aggfunc="sum"
     ).sort_index()
 
+    # ✅ FIX IMPORTANT
+    df_pivot = df_pivot.fillna(method="ffill")  # propage les données
+    df_pivot = df_pivot.dropna(axis=1, how="all")  # supprime comptes vides
+
     return df_pivot
+
 
 
 # ============================================================
@@ -1294,6 +1296,7 @@ def page_vue_globale():
             margin=dict(l=0, r=0, t=30, b=0),
             hovermode="x unified",
             showlegend=True,
+            legend_title_text="Comptes",
             xaxis=dict(showgrid=False),
             yaxis=dict(
                 ticksuffix=" €",
