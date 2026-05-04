@@ -9,12 +9,13 @@
 #   5. ROUTING       (sidebar + appel de page)
 # ============================================================
 
+import math
 import os
+
 import streamlit as st
 import pandas as pd
 import yfinance as yf
 import plotly.graph_objects as go
-import math
 from supabase import create_client
 
 # ============================================================
@@ -47,13 +48,17 @@ PATCH_NOTES = {
 # Renseigner ici les fonds OPCVM sans lien automatique possible.
 # ============================================================
 PRICE_LINKS: dict[str, str] = {
-    # Exemples — remplace par tes ISINs et URLs :
-    # "LU0292095535": "https://www.justetf.com/fr/etf-profile.html?isin=LU0292095535#apercu",
     "LU0292095535": "https://www.justetf.com/fr/etf-profile.html?isin=LU0292095535#apercu",
     "LU1832174962": "https://www.boursorama.com/bourse/opcvm/cours/0P0001DKPM/",
     "QS0004088926": "https://investir.lesechos.fr/cours/opcvm/impact-isr-performance-i-qs0004088926",
-    "QS0004036743": "https://investir.lesechos.fr/cours/opcvm/selection-mirova-actions-interntl-i-qs0004036743"
+    "QS0004036743": "https://investir.lesechos.fr/cours/opcvm/selection-mirova-actions-interntl-i-qs0004036743",
 }
+
+
+def fmt_eur(x: float) -> str:
+    """Formate un montant en euros avec séparateurs de milliers français."""
+    return f"{x:,.0f} €".replace(",", " ")
+
 
 @st.cache_resource
 def init_db():
@@ -184,6 +189,24 @@ def fetch_benchmark_history(ticker: str, start: str, end: str) -> pd.Series:
 # ============================================================
 # 3. CALCULS
 # ============================================================
+
+def filter_by_period(df: pd.DataFrame, periode: str) -> pd.DataFrame:
+    """
+    Filtre un DataFrame de snapshots selon une période choisie.
+    La colonne 'date' doit être de type datetime.
+    """
+    today = df["date"].max()
+    periode_map = {
+        "1 mois": today - pd.DateOffset(months=1),
+        "3 mois": today - pd.DateOffset(months=3),
+        "6 mois": today - pd.DateOffset(months=6),
+        "1 an":   today - pd.DateOffset(years=1),
+        "3 ans":  today - pd.DateOffset(years=3),
+        "Tout":   df["date"].min(),
+    }
+    cutoff = periode_map.get(periode, df["date"].min())
+    return df[df["date"] >= cutoff]
+
 
 def compute_kpis(df_snap: pd.DataFrame) -> dict:
     """
@@ -520,6 +543,7 @@ def compute_benchmark_comparison(
 
     return fig, perf_portef, perf_bench, ecart
 
+
 def compute_dca_projection(
     current_value: float,
     current_invested: float,
@@ -535,7 +559,7 @@ def compute_dca_projection(
       - Valeur théorique du portefeuille (croissance composée)
       - Valeur ajustée à l'inflation (pouvoir d'achat réel)
     """
-    months        = years * 12
+    months         = years * 12
     monthly_return = (1 + annual_return) ** (1 / 12) - 1
     monthly_infl   = (1 + inflation_rate) ** (1 / 12) - 1
 
@@ -597,8 +621,6 @@ def compute_dca_projection(
         hovertemplate="%{y:,.0f} €<extra>Valeur théorique</extra>",
     ))
 
-    # Ligne FIRE target si disponible
-    # (passée en paramètre optionnel depuis la page)
     fig.update_layout(
         height=450,
         margin=dict(l=0, r=0, t=30, b=0),
@@ -615,6 +637,7 @@ def compute_dca_projection(
     )
 
     return fig, theorique_list, reel_list, capital_list
+
 
 def compute_pea_positions(
     df_transactions: pd.DataFrame,
@@ -763,7 +786,7 @@ def compute_rebalancing_orders(
 
         # Choisir l'asset dont l'achat d'1 titre corrige le mieux l'écart
         # Score = écart restant après achat (on choisit le max)
-        best_aid  = None
+        best_aid   = None
         best_score = -999
 
         for aid in candidats:
@@ -788,15 +811,11 @@ def compute_rebalancing_orders(
     # ── ÉTAPE 4 : reliquat résiduel → répartition équitable ────
     if reliquat > 0.5:
         n = len(df_eligible)
-        part_equitable = reliquat / n
-        # Juste ajouté au montant à saisir, pas en titres supplémentaires
-        reliquat_par_asset = part_equitable
+        reliquat_par_asset = reliquat / n
     else:
         reliquat_par_asset = 0
 
-
     # ── ÉTAPE 5 : arrondi au multiple de 5€ supérieur ──────────
-
     orders = []
     for _, row in df_eligible.iterrows():
         aid          = row["asset_id"]
@@ -841,21 +860,21 @@ def page_vue_globale():
 
     col1.metric(
         "Valeur totale",
-        f"{kpis['total_value']:,.0f} €".replace(",", " "),
+        fmt_eur(kpis["total_value"]),
     )
     col2.metric(
         "Capital investi",
-        f"{kpis['invested_capital']:,.0f} €".replace(",", " "),
+        fmt_eur(kpis["invested_capital"]),
     )
     col3.metric(
         "Plus-value latente",
-        f"{kpis['plus_value']:,.0f} €".replace(",", " "),
+        fmt_eur(kpis["plus_value"]),
         f"{kpis['perf_pct']:+.2f} %",
         delta_color="normal",
     )
     col4.metric(
         "Cash disponible",
-        f"{kpis['cash']:,.0f} €".replace(",", " "),
+        fmt_eur(kpis["cash"]),
     )
 
     st.divider()
@@ -868,8 +887,7 @@ def page_vue_globale():
             min(fire["fire_pct"] / 100, 1.0),
             text=(
                 f"{fire['fire_pct']:.1f} % de l'objectif atteint "
-                f"({kpis['total_value']:,.0f} € / {fire['fire_target']:,.0f} €)"
-                .replace(",", " ")
+                f"({fmt_eur(kpis['total_value'])} / {fmt_eur(fire['fire_target'])})"
             ),
         )
     else:
@@ -879,11 +897,11 @@ def page_vue_globale():
 
     col_f1.metric(
         "Revenu passif mensuel (4%)",
-        f"{fire['passive_income_monthly']:,.0f} €/mois".replace(",", " "),
+        f"{fmt_eur(fire['passive_income_monthly'])}/mois",
     )
     col_f2.metric(
         "Revenu passif annuel (4%)",
-        f"{fire['passive_income_annual']:,.0f} €/an".replace(",", " "),
+        f"{fmt_eur(fire['passive_income_annual'])}/an",
     )
     if fire["freedom_days"] is not None:
         col_f3.metric(
@@ -905,15 +923,7 @@ def page_vue_globale():
             label_visibility="collapsed",
         )
 
-    today = df_snap["date"].max()
-    periode_map = {
-        "1 mois": today - pd.DateOffset(months=1),
-        "3 mois": today - pd.DateOffset(months=3),
-        "6 mois": today - pd.DateOffset(months=6),
-        "1 an":   today - pd.DateOffset(years=1),
-        "Tout":   df_snap["date"].min(),
-    }
-    df_filtered = df_snap[df_snap["date"] >= periode_map[periode]]
+    df_filtered = filter_by_period(df_snap, periode)
 
     fig = compute_perf_chart(df_filtered)
     st.plotly_chart(fig, use_container_width=True)
@@ -964,15 +974,7 @@ def page_analyses():
             index=2,
         )
 
-    today = df_snap["date"].max()
-    periode_map = {
-        "3 mois": today - pd.DateOffset(months=3),
-        "6 mois": today - pd.DateOffset(months=6),
-        "1 an":   today - pd.DateOffset(years=1),
-        "3 ans":  today - pd.DateOffset(years=3),
-        "Tout":   df_snap["date"].min(),
-    }
-    df_filtered = df_snap[df_snap["date"] >= periode_map[periode]]
+    df_filtered = filter_by_period(df_snap, periode)
 
     st.divider()
 
@@ -1140,7 +1142,7 @@ def page_analyses():
         # Paramètres utilisés (transparence)
         with col_info:
             st.caption(
-                f"DCA mensuel : **{monthly_dca:,.0f} €** · "
+                f"DCA mensuel : **{fmt_eur(monthly_dca)}** · "
                 f"Rendement estimé : **{annual_return*100:.1f} %/an** · "
                 f"Inflation : **{inflation_rate*100:.1f} %/an**"
             )
@@ -1165,19 +1167,19 @@ def page_analyses():
         col1, col2, col3, col4 = st.columns(4)
         col1.metric(
             f"Valeur dans {years} ans",
-            f"{val_finale_nom:,.0f} €".replace(",", " "),
+            fmt_eur(val_finale_nom),
         )
         col2.metric(
             "Valeur réelle (pouvoir d'achat)",
-            f"{val_finale_reel:,.0f} €".replace(",", " "),
+            fmt_eur(val_finale_reel),
         )
         col3.metric(
             "Capital total investi",
-            f"{capital_final:,.0f} €".replace(",", " "),
+            fmt_eur(capital_final),
         )
         col4.metric(
             "Gain généré par les intérêts",
-            f"{gain_total:,.0f} €".replace(",", " "),
+            fmt_eur(gain_total),
             f"{(gain_total / capital_final * 100):+.0f} % du capital",
             delta_color="off",
         )
@@ -1189,7 +1191,7 @@ def page_analyses():
                 line_dash="dash",
                 line_color="#2ECC71",
                 line_width=1.5,
-                annotation_text=f"  🎯 Objectif FIRE : {fire_target:,.0f} €".replace(",", " "),
+                annotation_text=f"  🎯 Objectif FIRE : {fmt_eur(fire_target)}",
                 annotation_position="top left",
                 annotation_font_color="#2ECC71",
             )
@@ -1202,9 +1204,8 @@ def page_analyses():
 
         st.caption(
             f"📌 À cet horizon, la règle des 4% générerait "
-            f"**{revenu_passif_nom:,.0f} €/mois** nominaux "
-            f"(soit **{revenu_passif_reel:,.0f} €/mois** en euros d'aujourd'hui)"
-            .replace(",", " ")
+            f"**{fmt_eur(revenu_passif_nom)}/mois** nominaux "
+            f"(soit **{fmt_eur(revenu_passif_reel)}/mois** en euros d'aujourd'hui)"
         )
 
     # FIX : un seul pied de page (suppression du doublon)
@@ -1248,11 +1249,10 @@ def page_reequilibrage():
 
     # ── Infos compte ───────────────────────────────────────────
     col2, col3 = st.columns(2)
-    col2.metric("Valeur totale PEA", f"{total_pea:,.0f} €".replace(",", " "))
+    col2.metric("Valeur totale PEA", fmt_eur(total_pea))
     col3.metric(
         "DCA mensuel (settings)",
-        f"{dca_amount:,.0f} €".replace(",", " ") if dca_amount > 0
-        else "⚠️ Non défini",
+        fmt_eur(dca_amount) if dca_amount > 0 else "⚠️ Non défini",
     )
 
     if dca_amount == 0:
@@ -1265,12 +1265,12 @@ def page_reequilibrage():
     st.subheader("🎯 Allocations cibles")
     st.caption("Renseigne le pourcentage cible pour chaque ligne. Le total doit faire 100 %.")
 
-    targets    = {}
+    targets     = {}
     total_cible = 0.0
 
     # Formulaire par asset
     for _, row in df_positions.iterrows():
-        aid        = str(int(row["asset_id"]))
+        aid          = str(int(row["asset_id"]))
         poids_actuel = row["value"] / total_pea * 100
 
         col_name, col_actuel, col_cible = st.columns([3, 1, 1])
@@ -1318,9 +1318,7 @@ def page_reequilibrage():
             "name", "value", "poids_pct", "cible_pct", "ecart_pct"
         ]].copy()
         df_display.columns = ["Asset", "Valeur (€)", "Actuel %", "Cible %", "Écart %"]
-        df_display["Valeur (€)"] = df_display["Valeur (€)"].map(
-            lambda x: f"{x:,.0f} €".replace(",", " ")
-        )
+        df_display["Valeur (€)"] = df_display["Valeur (€)"].map(fmt_eur)
 
         st.dataframe(
             df_display.style.map(color_ecart, subset=["Écart %"]),
@@ -1378,7 +1376,7 @@ def page_reequilibrage():
 
             st.divider()
             col1, col2, col3 = st.columns(3)
-            col1.metric("DCA disponible", f"{dca_amount:,.0f} €".replace(",", " "))
+            col1.metric("DCA disponible", fmt_eur(dca_amount))
             col2.metric(
                 "Total réellement investi",
                 f"{total_reel:,.2f} €".replace(",", " "),
@@ -1528,8 +1526,8 @@ def page_saisie():
                 col_name, col_price, col_date, col_btn = st.columns([3, 2, 2, 1])
 
                 # Lien vers la page de cours selon le type d'asset et l'ISIN
-                isin       = row.get("isin") or ""
-                asset_cls  = row.get("asset_class") or ""
+                isin      = row.get("isin") or ""
+                asset_cls = row.get("asset_class") or ""
                 if isin and asset_cls in ("etf", "fonds"):
                     url = PRICE_LINKS.get(
                         isin,
@@ -1674,10 +1672,8 @@ def page_saisie():
                 )
 
             # Aperçu temps réel — fonctionne car hors st.form
-            total  = compute_total_amount(type_txn, quantity, unit_price, fees, manual_amount)
-            signe  = "+" if total >= 0 else ""
-            flux   = "entrée" if total >= 0 else "sortie"
-            couleur = "normal" if total >= 0 else "inverse"
+            total = compute_total_amount(type_txn, quantity, unit_price, fees, manual_amount)
+            signe = "+" if total >= 0 else ""
 
             st.info(
                 f"**total_amount calculé : {signe}{total:.2f} €** "
