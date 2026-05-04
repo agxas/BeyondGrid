@@ -807,7 +807,14 @@ def compute_pea_positions(
         for k, v in positions.items()
     ])
     df_pos = df_pos.merge(
-        df_assets[["id", "name", "yahoo_ticker", "last_known_price"]],
+    df_assets[[
+        "id",
+        "name",
+        "yahoo_ticker",
+        "last_known_price",
+        "asset_class",
+        "geography"
+    ]],
         left_on="asset_id", right_on="id", how="left"
     ).drop(columns=["id"])
 
