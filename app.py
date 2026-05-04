@@ -31,9 +31,12 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "1.2"
+APP_VERSION = "1.3"
 PATCH_NOTES = {
-    
+    "1.3": [
+        "Ajout de sparklines pour visualiser la tendance des performances",
+        "Amélioration visuelle de la section Performance",
+    ],
     "1.2": [
         "Ajout de la variation en € sur les performances (1M, 3M, 1Y)",
         "Amélioration de la lisibilité des performances",
