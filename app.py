@@ -121,6 +121,29 @@ def display_kpi(label: str, value: str, delta: float | None = None, is_percent: 
         delta=delta_display,
     )
 
+def display_kpi_block(
+    col,
+    label: str,
+    value: str,
+    delta: float | None = None,
+    is_percent: bool = False,
+    subline: str | None = None
+):
+    """
+    Bloc KPI complet :
+    - KPI principal (via display_kpi)
+    - ligne secondaire compacte
+    """
+    with col:
+        display_kpi(
+            label,
+            value,
+            delta,
+            is_percent=is_percent,
+        )
+        if subline:
+            st.caption(subline)
+
 
 # Options de période partagées entre toutes les pages
 PERIODE_OPTIONS  = ["1 mois", "3 mois", "6 mois", "1 an", "3 ans", "Tout"]
@@ -1116,17 +1139,6 @@ def compute_accounts_evolution(df_snap_acc: pd.DataFrame) -> pd.DataFrame:
 
     return df_pivot
 
-def render_account_block(col, name, current, perf_pct, perf_val, pct_weight):
-    with col:
-        display_kpi(
-            name,
-            fmt_eur(current),
-            perf_pct,
-            is_percent=True,
-        )
-        st.caption(f"{fmt_eur(perf_val)} • Poids : {pct_weight:.1f}%")
-
-
 # ============================================================
 # 4. PAGES
 # ============================================================
@@ -1192,20 +1204,26 @@ def page_vue_globale():
     
     col1, col2, col3 = st.columns(3)
 
-    def render_perf_block(col, label, perf, value, spark):
-        with col:
-            display_kpi(
-                label,
-                fmt_pct(perf),
-            )
-            st.caption(f"{fmt_eur(value)} • {spark}")
+    display_kpi_block(
+        col1,
+        "1 mois",
+        fmt_pct(perf_1m),
+        subline=f"{fmt_eur(val_1m)} • {spark_1m}",
+    )
     
-    render_perf_block(col1, "1 mois", perf_1m, val_1m, spark_1m)
-    render_perf_block(col2, "3 mois", perf_3m, val_3m, spark_3m)
-    render_perf_block(col3, "1 an", perf_12m, val_12m, spark_12m)
-
-
-
+    display_kpi_block(
+        col2,
+        "3 mois",
+        fmt_pct(perf_3m),
+        subline=f"{fmt_eur(val_3m)} • {spark_3m}",
+    )
+    
+    display_kpi_block(
+        col3,
+        "1 an",
+        fmt_pct(perf_12m),
+        subline=f"{fmt_eur(val_12m)} • {spark_12m}",
+    )
 
     st.divider()
 
@@ -1343,13 +1361,13 @@ def page_vue_globale():
             perf_val = current - start
             pct = (current / total * 100) if total > 0 else 0
         
-            render_account_block(
+            display_kpi_block(
                 cols[i],
                 col_name,
-                current,
+                fmt_eur(current),
                 perf_pct,
-                perf_val,
-                pct,
+                is_percent=True,
+                subline=f"{fmt_eur(perf_val)} • {pct:.1f}%",
             )
 
 
