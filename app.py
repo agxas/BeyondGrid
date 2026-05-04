@@ -31,8 +31,13 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "1.1"
+APP_VERSION = "1.2"
 PATCH_NOTES = {
+    
+    "1.2": [
+        "Ajout de la variation en € sur les performances (1M, 3M, 1Y)",
+        "Amélioration de la lisibilité des performances",
+    ],
     "1.1": [
         "Ajout des performances par période (1M, 3M, 1Y)",
         "Coloration automatique des performances (vert/rouge)",
@@ -63,7 +68,7 @@ PRICE_LINKS: dict[str, str] = {
 
 def fmt_eur(x: float) -> str:
     """Formate un montant en euros avec séparateurs de milliers français."""
-    return f"{x:,.0f} €".replace(",", " ")
+    signe = "+" if x > 0 else "" return f"{signe}{x:,.0f} €".replace(",", " ")
 
 def fmt_pct(x: float) -> str:
     if abs(x) < 0.005:
@@ -286,6 +291,26 @@ def compute_perf_over_period(df_snap: pd.DataFrame, months: int) -> float:
         return 0.0
 
     return (end_value / start_value - 1) * 100
+
+def compute_perf_value_over_period(df_snap: pd.DataFrame, months: int) -> float:
+    """
+    Calcule la variation en € sur une période donnée.
+    """
+    if df_snap.empty or len(df_snap) < 2:
+        return 0.0
+
+    latest_date = df_snap["date"].max()
+    start_date = latest_date - pd.DateOffset(months=months)
+
+    df_period = df_snap[df_snap["date"] >= start_date]
+
+    if len(df_period) < 2:
+        return 0.0
+
+    start_value = float(df_period.iloc[0]["total_value"])
+    end_value = float(df_period.iloc[-1]["total_value"])
+
+    return end_value - start_value
 
 
 def compute_fire(kpis: dict, settings: dict) -> dict:
@@ -938,27 +963,30 @@ def page_vue_globale():
     perf_1m  = compute_perf_over_period(df_snap, 1)
     perf_3m  = compute_perf_over_period(df_snap, 3)
     perf_12m = compute_perf_over_period(df_snap, 12)
+    val_1m  = compute_perf_value_over_period(df_snap, 1)
+    val_3m  = compute_perf_value_over_period(df_snap, 3)
+    val_12m = compute_perf_value_over_period(df_snap, 12)
     
     col1, col2, col3 = st.columns(3)
     
-    col1.metric(
+   col1.metric(
         "1 mois",
         "",
-        f"{trend_icon(perf_1m)} {fmt_pct(perf_1m)}",
+        f"{trend_icon(perf_1m)} {fmt_pct(perf_1m)} ({fmt_eur(val_1m)})",
         delta_color=color_metric(perf_1m),
     )
     
     col2.metric(
         "3 mois",
         "",
-        f"{trend_icon(perf_3m)} {fmt_pct(perf_3m)}",
+        f"{trend_icon(perf_3m)} {fmt_pct(perf_3m)} ({fmt_eur(val_3m)})",
         delta_color=color_metric(perf_3m),
     )
     
     col3.metric(
         "1 an",
         "",
-        f"{trend_icon(perf_12m)} {fmt_pct(perf_12m)}",
+        f"{trend_icon(perf_12m)} {fmt_pct(perf_12m)} ({fmt_eur(val_12m)})",
         delta_color=color_metric(perf_12m),
     )
 
