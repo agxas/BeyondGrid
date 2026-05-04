@@ -1114,6 +1114,16 @@ def compute_accounts_evolution(df_snap_acc: pd.DataFrame) -> pd.DataFrame:
 
     return df_pivot
 
+def render_account_block(col, name, current, perf_pct, perf_val, pct_weight):
+    with col:
+        display_kpi(
+            name,
+            fmt_eur(current),
+            perf_pct,
+            is_percent=True,
+        )
+        st.caption(f"{fmt_eur(perf_val)} • {pct_weight:.1f}% du total")
+
 
 # ============================================================
 # 4. PAGES
