@@ -968,27 +968,22 @@ def page_vue_globale():
     val_12m = compute_perf_value_over_period(df_snap, 12)
     
     col1, col2, col3 = st.columns(3)
+
+    def render_perf(label, perf, value):
+        color = "#2ECC71" if perf >= 0 else "#E84C4C"
+        return f"""
+        <div style="text-align:center">
+            <div style="font-size:14px;color:#888">{label}</div>
+            <div style="font-size:22px;font-weight:600;color:{color}">
+                {trend_icon(perf)} {fmt_pct(perf)} ({fmt_eur(value)})
+            </div>
+        </div>
+        """
     
-    col1.metric(
-        "1 mois",
-        "",
-        f"{trend_icon(perf_1m)} {fmt_pct(perf_1m)} ({fmt_eur(val_1m)})",
-        delta_color=color_metric(perf_1m),
-    )
-    
-    col2.metric(
-        "3 mois",
-        "",
-        f"{trend_icon(perf_3m)} {fmt_pct(perf_3m)} ({fmt_eur(val_3m)})",
-        delta_color=color_metric(perf_3m),
-    )
-    
-    col3.metric(
-        "1 an",
-        "",
-        f"{trend_icon(perf_12m)} {fmt_pct(perf_12m)} ({fmt_eur(val_12m)})",
-        delta_color=color_metric(perf_12m),
-    )
+    col1.markdown(render_perf("1 mois", perf_1m, val_1m), unsafe_allow_html=True)
+    col2.markdown(render_perf("3 mois", perf_3m, val_3m), unsafe_allow_html=True)
+    col3.markdown(render_perf("1 an", perf_12m, val_12m), unsafe_allow_html=True)
+
 
     st.divider()
 
