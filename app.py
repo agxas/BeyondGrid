@@ -1298,6 +1298,13 @@ def page_vue_globale():
                 f"{fmt_pct(perf_pct)} · {fmt_eur(perf_val)}",
                 delta_color=color_metric(perf_pct)
             )
+            total = df_acc_evo.iloc[-1].sum()
+
+            for i, col_name in enumerate(df_acc_evo.columns):
+                val = df_acc_evo[col_name].iloc[-1]
+                pct = (val / total * 100) if total > 0 else 0
+            
+                cols[i].caption(f"{pct:.1f} % du patrimoine")
     
         fig_acc = go.Figure()
     
