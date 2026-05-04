@@ -1302,9 +1302,15 @@ def page_vue_globale():
         
         cols = st.columns(len(df_acc_evo.columns))
         
-        for i, col_name in enumerate(df_acc_evo.columns):
-            value = df_acc_evo[col_name].iloc[-1]
-            cols[i].metric(col_name, fmt_eur(value))
+        colors = ["#4C9BE8", "#2ECC71", "#F5A623", "#9B59B6"]
+
+        for i, col in enumerate(df_acc_evo.columns):
+            fig_acc.add_trace(go.Scatter(
+                x=df_acc_evo.index,
+                y=df_acc_evo[col],
+                name=col,
+                line=dict(color=colors[i % len(colors)])
+            ))
 
         st.plotly_chart(fig_acc, use_container_width=True)
     
