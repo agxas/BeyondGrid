@@ -1895,10 +1895,13 @@ def page_transactions():
     col1, col2, col3 = st.columns(3)
 
     # Compte
+    account_names = df_accounts["name"].dropna().tolist() if not df_accounts.empty else []
+    
     account_filter = col1.selectbox(
         "Compte",
-        options=["Tous"] + df_accounts["name"].tolist(),
+        options=["Tous"] + account_names,
     )
+
 
     # Type
     type_filter = col2.selectbox(
