@@ -34,10 +34,12 @@ st.set_page_config(
 APP_VERSION = "1.7"
 PATCH_NOTES = {
     "1.7": [
-        "Refonte de l’affichage de la performance par compte",
-        "Simplification des KPIs (suppression des couleurs Streamlit intrusives)",
-        "Ajout d’une ligne synthétique combinant performance %, plus-value € et poids du compte",
-        "Amélioration de la lisibilité globale du dashboard",
+        "Refonte complète du système de KPIs pour une interface homogène et maintenable",
+        "Uniformisation de l'affichage entre performances et comptes (même logique visuelle)",
+        "Suppression du rendu HTML custom au profit de composants Streamlit natifs",
+        "Ajout d’un affichage compact : performance %, variation € et poids sur une seule ligne",
+        "Amélioration de la lisibilité et de la cohérence globale du dashboard",
+        "Nettoyage du code et suppression des fonctions obsolètes (color_metric, trend_icon)",
     ],
     "1.6": [
         "Ajout de l’allocation globale multi-comptes",
@@ -1122,7 +1124,7 @@ def render_account_block(col, name, current, perf_pct, perf_val, pct_weight):
             perf_pct,
             is_percent=True,
         )
-        st.caption(f"{fmt_eur(perf_val)} • {pct_weight:.1f}% du total")
+        st.caption(f"{fmt_eur(perf_val)} • Poids : {pct_weight:.1f}%")
 
 
 # ============================================================
