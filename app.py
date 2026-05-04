@@ -1286,8 +1286,6 @@ def page_vue_globale():
     df_acc_evo = compute_accounts_evolution(df_snap_acc)
     
     if not df_acc_evo.empty:
-    
-        cols = st.columns(len(df_acc_evo.columns))
         
         # ✅ boucle KPI
 
