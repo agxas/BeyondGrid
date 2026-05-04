@@ -31,8 +31,12 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "1.3"
+APP_VERSION = "1.4"
 PATCH_NOTES = {
+    "1.4": [
+        "Ajout de l’historique des transactions avec filtres",
+        "Affichage du nom des assets au lieu des IDs",
+    ],
     "1.3": [
         "Ajout de sparklines pour visualiser la tendance des performances",
         "Amélioration visuelle de la section Performance",
@@ -1947,7 +1951,6 @@ def page_transactions():
      # mapping assets
     asset_map = df_assets.set_index("id")["name"].to_dict()
     df_display["asset"] = df_display["asset_id"].map(asset_map)
-    df_display["asset"] = df_display["asset"].fillna("—")
 
     df_display = df_display[[
         "date",
