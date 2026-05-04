@@ -1010,8 +1010,6 @@ def page_vue_globale():
     
     col1, col2, col3 = st.columns(3)
 
-    col1, col2, col3 = st.columns(3)
-
     def render_perf(label, perf, value, spark):
         color = "#2ECC71" if perf >= 0 else "#E84C4C"
     
@@ -1985,8 +1983,9 @@ menu = st.sidebar.radio(
     format_func=lambda x: {
         "Vue Globale":           "🏠 Vue Globale",
         "Analyses & Graphiques": "📊 Analyses",
-        "Rééquilibrage PEA":    "⚖️ Rééquilibrage PEA",
-        "Saisie manuelle":      "✍️ Saisie manuelle",
+        "Rééquilibrage PEA":     "⚖️ Rééquilibrage PEA",
+        "Saisie manuelle":       "✍️ Saisie manuelle",
+        "Transactions":          "🧾 Transactions",
     }[x],
 )
 
