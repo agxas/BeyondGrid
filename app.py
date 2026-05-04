@@ -1180,27 +1180,17 @@ def page_vue_globale():
     
     col1, col2, col3 = st.columns(3)
 
-    def render_perf(label, perf, value, spark):
-        color = "#00c853" if perf >= 0 else "#ff4b4b"
+    def render_perf_block(col, label, perf, value, spark):
+        with col:
+            display_kpi(
+                label,
+                fmt_pct(perf),
+            )
+            st.caption(f"{fmt_eur(value)} • {spark}")
     
-        return f"""
-        <div style="text-align:center">
-            <div style="font-size:14px;color:#888">{label}</div>
-            <div style="font-size:22px;font-weight:600;color:{color}">
-                {trend_icon(perf)} {fmt_pct(perf)}
-            </div>
-            <div style="font-size:14px;color:#555">
-                {fmt_eur(value)}
-            </div>
-            <div style="font-family:monospace;font-size:16px;color:#888;margin-top:4px">
-                {spark}
-            </div>
-        </div>
-        """
-    
-    col1.markdown(render_perf("1 mois", perf_1m, val_1m, spark_1m), unsafe_allow_html=True)
-    col2.markdown(render_perf("3 mois", perf_3m, val_3m, spark_3m), unsafe_allow_html=True)
-    col3.markdown(render_perf("1 an", perf_12m, val_12m, spark_12m), unsafe_allow_html=True)
+    render_perf_block(col1, "1 mois", perf_1m, val_1m, spark_1m)
+    render_perf_block(col2, "3 mois", perf_3m, val_3m, spark_3m)
+    render_perf_block(col3, "1 an", perf_12m, val_12m, spark_12m)
 
 
 
