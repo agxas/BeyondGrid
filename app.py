@@ -97,14 +97,6 @@ def fmt_pct(x: float) -> str:
     return f"{x:+.2f} %"
 
 
-def trend_icon(value: float) -> str:
-    if value > 0:
-        return "🟢"
-    elif value < 0:
-        return "🔴"
-    return "⚪"
-
-
 def display_kpi(label: str, value: str, delta: float | None = None, is_percent: bool = False):
     """
     KPI homogène avec :
@@ -115,12 +107,11 @@ def display_kpi(label: str, value: str, delta: float | None = None, is_percent: 
     delta_display = None
 
     if delta is not None:
-        icon = "▲" if delta > 0 else "▼" if delta < 0 else "•"
-
         if is_percent:
-            delta_display = f"{icon} {delta:+.2f}%"
+            delta_display = f"{delta:+.2f}%"
         else:
-            delta_display = f"{icon} {delta:+,.0f} €".replace(",", " ")
+            delta_display = f"{delta:+,.0f} €".replace(",", " ")
+
 
     st.metric(
         label=label,
