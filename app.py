@@ -68,7 +68,7 @@ PRICE_LINKS: dict[str, str] = {
 
 def fmt_eur(x: float) -> str:
     """Formate un montant en euros avec séparateurs de milliers français."""
-    signe = "+" if x > 0 else "" return f"{signe}{x:,.0f} €".replace(",", " ")
+    return f"{x:,.0f} €".replace(",", " ")
 
 def fmt_pct(x: float) -> str:
     if abs(x) < 0.005:
