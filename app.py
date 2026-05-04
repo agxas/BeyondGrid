@@ -1884,6 +1884,7 @@ def page_transactions():
 
     df_txn = fetch_transactions()
     df_accounts = fetch_accounts()
+    df_assets = fetch_assets()
 
     if df_txn.empty:
         st.info("Aucune transaction enregistrée.")
@@ -1901,7 +1902,6 @@ def page_transactions():
         "Compte",
         options=["Tous"] + account_names,
     )
-
 
     # Type
     type_filter = col2.selectbox(
@@ -1944,11 +1944,16 @@ def page_transactions():
     account_map = df_accounts.set_index("id")["name"].to_dict()
     df_display["account"] = df_display["account_id"].map(account_map)
 
+     # mapping assets
+    asset_map = df_assets.set_index("id")["name"].to_dict()
+    df_display["asset"] = df_display["asset_id"].map(asset_map)
+    df_display["asset"] = df_display["asset"].fillna("—")
+
     df_display = df_display[[
         "date",
         "account",
         "type",
-        "asset_id",
+        "asset",
         "quantity",
         "unit_price",
         "fees",
