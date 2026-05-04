@@ -1298,9 +1298,7 @@ def page_vue_globale():
             perf_pct = ((current / start) - 1) * 100 if start > 0 else 0
             perf_val = current - start
            
-            delta_text = (
-                f"{perf_pct:+.2f}% · {fmt_eur(perf_val)}"
-            )
+            delta_text = f"{perf_pct:+.2f}%  •  {fmt_eur(perf_val)}"
             
             cols[i].metric(
                 col_name,
@@ -1308,7 +1306,11 @@ def page_vue_globale():
                 delta=delta_text,
                 delta_color="normal" if perf_pct >= 0 else "inverse"
             )
-
+            
+            cols[i].markdown(
+                f"<div style='text-align:center; font-size:12px; color:#888'>{pct:.1f}% du patrimoine</div>",
+                unsafe_allow_html=True
+            )
 
         
         # ✅ UNE SEULE boucle pour les %
