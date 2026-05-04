@@ -920,6 +920,8 @@ def page_vue_globale():
     col2.metric("3 mois", f"{perf_3m:+.2f} %")
     col3.metric("1 an", f"{perf_12m:+.2f} %")
 
+    st.divider()
+
     # ── FIRE ───────────────────────────────────────────────────
     st.subheader("🎯 Objectif FIRE")
 
