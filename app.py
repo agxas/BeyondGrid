@@ -31,8 +31,13 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "1.0"
+APP_VERSION = "1.1"
 PATCH_NOTES = {
+    "1.1": [
+        "Ajout des performances par période (1M, 3M, 1Y)",
+        "Coloration automatique des performances (vert/rouge)",
+        "Ajout d’un indicateur visuel de tendance (🟢🔴)",
+    ],
     "1.0": [
         "Vue Globale : KPIs, objectif FIRE, évolution patrimoine, drawdown",
         "Analyses : Sharpe, volatilité, Livret A, benchmark, projection DCA",
@@ -40,6 +45,7 @@ PATCH_NOTES = {
         "Saisie manuelle : paramètres, prix manuels, transactions",
     ],
 }
+
 
 # ============================================================
 # LIENS PRIX MANUELS
@@ -60,9 +66,8 @@ def fmt_eur(x: float) -> str:
     return f"{x:,.0f} €".replace(",", " ")
 
 def fmt_pct(x: float) -> str:
-    """
-    Formate un pourcentage avec signe +/-
-    """
+    if abs(x) < 0.005:
+        x = 0.0
     return f"{x:+.2f} %"
 
 
@@ -71,6 +76,13 @@ def color_metric(value: float) -> str:
     Retourne 'normal' (vert) ou 'inverse' (rouge) pour Streamlit.
     """
     return "normal" if value >= 0 else "inverse"
+
+def trend_icon(value: float) -> str:
+    if value > 0:
+        return "🟢"
+    elif value < 0:
+        return "🔴"
+    return "⚪"
 
 
 # Options de période partagées entre toutes les pages
@@ -930,20 +942,23 @@ def page_vue_globale():
     col1, col2, col3 = st.columns(3)
     
     col1.metric(
-    "1 mois",
-    fmt_pct(perf_1m),
-    delta_color=color_metric(perf_1m),
+        "1 mois",
+        "",
+        f"{trend_icon(perf_1m)} {fmt_pct(perf_1m)}",
+        delta_color=color_metric(perf_1m),
     )
     
     col2.metric(
         "3 mois",
-        fmt_pct(perf_3m),
+        "",
+        f"{trend_icon(perf_3m)} {fmt_pct(perf_3m)}",
         delta_color=color_metric(perf_3m),
     )
     
     col3.metric(
         "1 an",
-        fmt_pct(perf_12m),
+        "",
+        f"{trend_icon(perf_12m)} {fmt_pct(perf_12m)}",
         delta_color=color_metric(perf_12m),
     )
 
