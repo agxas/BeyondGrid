@@ -60,6 +60,11 @@ def fmt_eur(x: float) -> str:
     return f"{x:,.0f} €".replace(",", " ")
 
 
+# Options de période partagées entre toutes les pages
+PERIODE_OPTIONS  = ["1 mois", "3 mois", "6 mois", "1 an", "3 ans", "Tout"]
+PERIODE_DEFAULT  = "1 an"   # index calculé dynamiquement depuis la liste
+
+
 @st.cache_resource
 def init_db():
     return create_client(
@@ -918,8 +923,8 @@ def page_vue_globale():
     with col_period:
         periode = st.selectbox(
             "Période",
-            options=["1 mois", "3 mois", "6 mois", "1 an", "Tout"],
-            index=4,
+            options=PERIODE_OPTIONS,
+            index=PERIODE_OPTIONS.index(PERIODE_DEFAULT),
             label_visibility="collapsed",
         )
 
@@ -970,8 +975,8 @@ def page_analyses():
     with col_period:
         periode = st.selectbox(
             "Période d'analyse",
-            options=["3 mois", "6 mois", "1 an", "3 ans", "Tout"],
-            index=2,
+            options=PERIODE_OPTIONS,
+            index=PERIODE_OPTIONS.index(PERIODE_DEFAULT),
         )
 
     df_filtered = filter_by_period(df_snap, periode)
