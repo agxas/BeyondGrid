@@ -31,15 +31,16 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "1.7"
+APP_VERSION = "2.0"
 PATCH_NOTES = {
-    "1.7": [
-        "Refonte complète du système de KPIs pour une interface homogène et maintenable",
-        "Uniformisation de l'affichage entre performances et comptes (même logique visuelle)",
+    "2.0": [
+        "Refonte complète de l’interface utilisateur avec un système de composants KPI réutilisables",
+        "Uniformisation de l’affichage sur l’ensemble du dashboard (performances, comptes, analyses)",
+        "Amélioration majeure de la lisibilité avec un design plus compact et cohérent",
         "Suppression du rendu HTML custom au profit de composants Streamlit natifs",
-        "Ajout d’un affichage compact : performance %, variation € et poids sur une seule ligne",
-        "Amélioration de la lisibilité et de la cohérence globale du dashboard",
-        "Nettoyage du code et suppression des fonctions obsolètes (color_metric, trend_icon)",
+        "Correction des incohérences visuelles (flèches, deltas, interprétation des performances)",
+        "Structure du code améliorée pour une meilleure maintenabilité et évolutivité",
+        "Nettoyage global et suppression des fonctions obsolètes",
     ],
     "1.6": [
         "Ajout de l’allocation globale multi-comptes",
