@@ -1316,30 +1316,28 @@ def page_vue_globale():
         total = df_acc_evo.iloc[-1].sum()
     
         for i, col_name in enumerate(df_acc_evo.columns):
-    
+
             values = df_acc_evo[col_name].dropna()
-    
+        
             if len(values) < 2:
-                cols[i].metric(col_name, fmt_eur(values.iloc[-1]))
+                with cols[i]:
+                    display_kpi(col_name, fmt_eur(values.iloc[-1]))
                 continue
-    
+        
             current = values.iloc[-1]
             start = values.iloc[0]
-    
+        
             perf_pct = ((current / start) - 1) * 100 if start > 0 else 0
             perf_val = current - start
-    
             pct = (current / total * 100) if total > 0 else 0
-    
-            icon = "▲" if perf_pct > 0 else "▼" if perf_pct < 0 else "•"
-
-            cols[i].metric(
+        
+            render_account_block(
+                cols[i],
                 col_name,
-                fmt_eur(current)
-            )
-            
-            cols[i].caption(
-                f"{icon} {perf_pct:+.2f}% • {fmt_eur(perf_val)} • {pct:.1f}%"
+                current,
+                perf_pct,
+                perf_val,
+                pct,
             )
 
 
