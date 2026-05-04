@@ -969,7 +969,7 @@ def page_vue_globale():
     
     col1, col2, col3 = st.columns(3)
     
-   col1.metric(
+    col1.metric(
         "1 mois",
         "",
         f"{trend_icon(perf_1m)} {fmt_pct(perf_1m)} ({fmt_eur(val_1m)})",
