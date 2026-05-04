@@ -1305,12 +1305,15 @@ def page_vue_globale():
     
             pct = (current / total * 100) if total > 0 else 0
     
+            icon = "🟢" if perf_pct >= 0 else "🔴"
+            
             cols[i].metric(
                 col_name,
                 fmt_eur(current),
-                delta=f"{perf_pct:+.2f}% • {fmt_eur(perf_val)} • {pct:.1f}% du total",
-                delta_color="normal" if perf_pct >= 0 else "inverse"
+                delta=f"{icon} {perf_pct:+.2f}% • {fmt_eur(perf_val)} • {pct:.1f}%",
+                delta_color="off"
             )
+
 
     # ── Drawdown ───────────────────────────────────────────────
     st.subheader("📉 Drawdown")
