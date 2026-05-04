@@ -468,7 +468,12 @@ def compute_drawdown(df_snap: pd.DataFrame) -> tuple[go.Figure, float]:
         height=280,
         margin=dict(l=0, r=0, t=20, b=0),
         hovermode="x unified",
-        showlegend=False,
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            y=1.02,
+            x=0
+        ),
         xaxis=dict(showgrid=False),
         yaxis=dict(ticksuffix=" %", tickformat=".1f", gridcolor="#f0f0f0"),
         plot_bgcolor="white",
@@ -1141,7 +1146,7 @@ def page_vue_globale():
     col1, col2, col3 = st.columns(3)
 
     def render_perf(label, perf, value, spark):
-        color = "#2ECC71" if perf >= 0 else "#E84C4C"
+        color = "#00c853" if perf >= 0 else "#ff4b4b"
     
         return f"""
         <div style="text-align:center">
