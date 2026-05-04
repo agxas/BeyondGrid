@@ -1262,30 +1262,6 @@ def page_vue_globale():
     fig = compute_perf_chart(df_filtered)
     st.plotly_chart(fig, use_container_width=True)
 
-    # ── Drawdown ───────────────────────────────────────────────
-    st.subheader("📉 Drawdown")
-
-    fig_dd, max_dd = compute_drawdown(df_filtered)
-
-    if max_dd > -10:
-        dd_label = "🟢 Faible"
-    elif max_dd > -20:
-        dd_label = "🟡 Modéré"
-    else:
-        dd_label = "🔴 Sévère"
-
-    col_dd1, col_dd2, _ = st.columns([1, 1, 5])
-    col_dd1.metric("Pire drawdown", f"{max_dd:.1f} %")
-    col_dd2.metric("Niveau de risque", dd_label)
-
-    st.plotly_chart(fig_dd, use_container_width=True)
-
-    st.divider()
-    st.caption(
-        f"Dernière donnée : {df_snap.iloc[-1]['date'].strftime('%d/%m/%Y')} "
-        f"· {len(df_snap)} snapshots disponibles"
-    )
-
     # ── Vue par compte ─────────────────────────────
     st.subheader("🏦 Évolution par compte")
     
@@ -1327,6 +1303,30 @@ def page_vue_globale():
     
     else:
         st.info("Pas de données par compte disponibles.")
+
+    # ── Drawdown ───────────────────────────────────────────────
+    st.subheader("📉 Drawdown")
+
+    fig_dd, max_dd = compute_drawdown(df_filtered)
+
+    if max_dd > -10:
+        dd_label = "🟢 Faible"
+    elif max_dd > -20:
+        dd_label = "🟡 Modéré"
+    else:
+        dd_label = "🔴 Sévère"
+
+    col_dd1, col_dd2, _ = st.columns([1, 1, 5])
+    col_dd1.metric("Pire drawdown", f"{max_dd:.1f} %")
+    col_dd2.metric("Niveau de risque", dd_label)
+
+    st.plotly_chart(fig_dd, use_container_width=True)
+
+    st.divider()
+    st.caption(
+        f"Dernière donnée : {df_snap.iloc[-1]['date'].strftime('%d/%m/%Y')} "
+        f"· {len(df_snap)} snapshots disponibles"
+    )
 
 
 def page_analyses():
