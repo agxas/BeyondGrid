@@ -31,8 +31,12 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "1.5"
+APP_VERSION = "1.6"
 PATCH_NOTES = {
+    "1.6": [
+        "Ajout de l’allocation globale multi-comptes",
+        "Visualisation de la répartition patrimoniale (classe d’actifs et géographie)",
+    ],
     "1.5": [
         "Ajout de la répartition du portefeuille (classe d’actifs et géographie)",
         "Visualisation en graphique donut interactive",
@@ -983,6 +987,50 @@ def compute_allocation(df_positions: pd.DataFrame, df_assets: pd.DataFrame):
 
     return by_class, by_geo
 
+def compute_global_positions(df_txn: pd.DataFrame, df_assets: pd.DataFrame) -> pd.DataFrame:
+    """
+    Reconstruit toutes les positions (tous comptes confondus)
+    """
+    df_txn = df_txn[df_txn["asset_id"].notna()].copy()
+
+    if df_txn.empty:
+        return pd.DataFrame()
+
+    positions = {}
+
+    for _, row in df_txn.iterrows():
+        aid = int(row["asset_id"])
+        qty = float(row["quantity"] or 0)
+
+        if row["type"] == "buy":
+            positions[aid] = positions.get(aid, 0) + qty
+        elif row["type"] == "sell":
+            positions[aid] = positions.get(aid, 0) - qty
+
+    # garder uniquement les positions > 0
+    positions = {k: v for k, v in positions.items() if v > 1e-9}
+
+    if not positions:
+        return pd.DataFrame()
+
+    df_pos = pd.DataFrame([
+        {"asset_id": k, "quantity": v}
+        for k, v in positions.items()
+    ])
+
+    df_pos = df_pos.merge(
+        df_assets[["id", "name", "asset_class", "geography", "last_known_price"]],
+        left_on="asset_id",
+        right_on="id",
+        how="left"
+    ).drop(columns=["id"])
+
+    df_pos["last_known_price"] = df_pos["last_known_price"].astype(float)
+    df_pos["value"] = df_pos["quantity"] * df_pos["last_known_price"]
+
+    return df_pos.reset_index(drop=True)
+
+
 
 # ============================================================
 # 4. PAGES
@@ -1099,6 +1147,56 @@ def page_vue_globale():
         )
     else:
         col_f3.info("Définis ton revenu mensuel pour ce calcul.")
+
+    # ── Allocation globale ─────────────────────────────
+    st.divider()
+    st.subheader("📊 Allocation globale")
+    
+    df_txn = fetch_transactions()
+    df_assets = fetch_assets()
+    
+    df_positions_global = compute_global_positions(df_txn, df_assets)
+    
+    if not df_positions_global.empty:
+    
+        by_class, by_geo = compute_allocation(df_positions_global, df_assets)
+    
+        col1, col2 = st.columns(2)
+    
+        # Classe d'actifs
+        if not by_class.empty:
+            fig_class = go.Figure(go.Pie(
+                labels=by_class["asset_class"],
+                values=by_class["value"],
+                hole=0.4,
+                textinfo="label+percent"
+            ))
+    
+            fig_class.update_layout(
+                title="Classe d'actifs",
+                margin=dict(l=0, r=0, t=40, b=0),
+            )
+    
+            col1.plotly_chart(fig_class, use_container_width=True)
+    
+        # Géographie
+        if not by_geo.empty:
+            fig_geo = go.Figure(go.Pie(
+                labels=by_geo["geography"],
+                values=by_geo["value"],
+                hole=0.4,
+                textinfo="label+percent"
+            ))
+    
+            fig_geo.update_layout(
+                title="Géographie",
+                margin=dict(l=0, r=0, t=40, b=0),
+            )
+    
+            col2.plotly_chart(fig_geo, use_container_width=True)
+    
+    else:
+        st.info("Aucune position détectée.")
 
     # ── Graphique valeur vs capital ────────────────────────────
     st.subheader("📈 Évolution du patrimoine")
