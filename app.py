@@ -1293,12 +1293,16 @@ def page_vue_globale():
             perf_pct = ((current / start) - 1) * 100 if start > 0 else 0
             perf_val = current - start
         
+            
             cols[i].metric(
                 col_name,
                 fmt_eur(current),
-                delta=f"{fmt_pct(perf_pct)} · {fmt_eur(perf_val)}",
+                delta=f"{perf_pct:+.2f} %",
                 delta_color="normal" if perf_pct >= 0 else "inverse"
             )
+            
+            cols[i].caption(f"{fmt_eur(perf_val)}")
+
         
         # ✅ UNE SEULE boucle pour les %
         total = df_acc_evo.iloc[-1].sum()
