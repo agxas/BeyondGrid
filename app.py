@@ -1298,7 +1298,14 @@ def page_vue_globale():
             plot_bgcolor="white",
             paper_bgcolor="rgba(0,0,0,0)",
         )
-    
+        
+        
+        cols = st.columns(len(df_acc_evo.columns))
+        
+        for i, col_name in enumerate(df_acc_evo.columns):
+            value = df_acc_evo[col_name].iloc[-1]
+            cols[i].metric(col_name, fmt_eur(value))
+
         st.plotly_chart(fig_acc, use_container_width=True)
     
     else:
