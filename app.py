@@ -1284,78 +1284,41 @@ def page_vue_globale():
         cols = st.columns(len(df_acc_evo.columns))
         
         # ✅ boucle KPI
+
+        cols = st.columns(len(df_acc_evo.columns))
+    
+        total = df_acc_evo.iloc[-1].sum()
+    
         for i, col_name in enumerate(df_acc_evo.columns):
-        
+    
             values = df_acc_evo[col_name].dropna()
-        
+    
             if len(values) < 2:
                 cols[i].metric(col_name, fmt_eur(values.iloc[-1]))
                 continue
-        
+    
             current = values.iloc[-1]
             start = values.iloc[0]
-        
+    
             perf_pct = ((current / start) - 1) * 100 if start > 0 else 0
             perf_val = current - start
-           
-            delta_text = f"{perf_pct:+.2f}%  •  {fmt_eur(perf_val)}"
-            
+    
+            pct = (current / total * 100) if total > 0 else 0
+    
+            # ✅ FIX couleur : delta DOIT être un float
             cols[i].metric(
                 col_name,
                 fmt_eur(current),
-                delta=delta_text,
+                delta=round(perf_pct, 2),
                 delta_color="normal" if perf_pct >= 0 else "inverse"
             )
-            
+    
+            # ✅ ligne custom propre (remplace ton ancien delta_text)
             cols[i].markdown(
-                f"<div style='text-align:center; font-size:12px; color:#888'>{pct:.1f}% du patrimoine</div>",
-                unsafe_allow_html=True
-            )
+                f"""
+                <div style='text-align:center; font-size:13px; margin-top:-6px'>
+                    {perf_pct:+.2f}% • {fmt_eur(perf_val)}<br>
 
-        
-        # ✅ UNE SEULE boucle pour les %
-        total = df_acc_evo.iloc[-1].sum()
-        
-        for i, col_name in enumerate(df_acc_evo.columns):
-            val = df_acc_evo[col_name].iloc[-1]
-            pct = (val / total * 100) if total > 0 else 0
-        
-            cols[i].caption(f"{pct:.1f} % du patrimoine")
-            
-        fig_acc = go.Figure()
-    
-        colors = ["#4C9BE8", "#2ECC71", "#F5A623", "#9B59B6"]
-    
-        for i, col in enumerate(df_acc_evo.columns):
-            fig_acc.add_trace(go.Scatter(
-                x=df_acc_evo.index,
-                y=df_acc_evo[col],
-                mode="lines",
-                name=col,
-                line=dict(color=colors[i % len(colors)])
-            ))
-    
-        fig_acc.update_layout(
-            height=400,
-            margin=dict(l=0, r=0, t=30, b=0),
-            hovermode="x unified",
-            showlegend=True,
-            legend_title_text="Comptes",
-            xaxis=dict(showgrid=False),
-            yaxis=dict(
-                ticksuffix=" €",
-                tickformat=",.0f",
-                gridcolor="#f0f0f0"
-            ),
-            legend=dict(orientation="h", y=1.02, x=0),
-            plot_bgcolor="white",
-            paper_bgcolor="rgba(0,0,0,0)",
-        )
-    
-        st.plotly_chart(fig_acc, use_container_width=True)
-    
-    else:
-        st.info("Pas de données par compte disponibles.")
 
     # ── Drawdown ───────────────────────────────────────────────
     st.subheader("📉 Drawdown")
