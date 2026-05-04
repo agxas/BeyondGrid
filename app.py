@@ -1064,6 +1064,9 @@ def compute_accounts_evolution(df_snap_acc: pd.DataFrame) -> pd.DataFrame:
 
     df = df_snap_acc.copy()
 
+    # ✅ FIX 1 : supprimer comptes nulls
+    df = df.dropna(subset=["account_name"])
+
     df_pivot = df.pivot_table(
         index="date",
         columns="account_name",
@@ -1071,12 +1074,13 @@ def compute_accounts_evolution(df_snap_acc: pd.DataFrame) -> pd.DataFrame:
         aggfunc="sum"
     ).sort_index()
 
-    # ✅ FIX IMPORTANT
-    df_pivot = df_pivot.fillna(method="ffill")  # propage les données
-    df_pivot = df_pivot.dropna(axis=1, how="all")  # supprime comptes vides
+    # ✅ FIX 2 : pandas moderne
+    df_pivot = df_pivot.ffill()
+
+    # ✅ FIX 3 : éviter colonnes vides
+    df_pivot = df_pivot.dropna(axis=1, how="all")
 
     return df_pivot
-
 
 
 # ============================================================
@@ -1273,10 +1277,27 @@ def page_vue_globale():
     if not df_acc_evo.empty:
     
         cols = st.columns(len(df_acc_evo.columns))
-    
+
         for i, col_name in enumerate(df_acc_evo.columns):
-            value = df_acc_evo[col_name].iloc[-1]
-            cols[i].metric(col_name, fmt_eur(value))
+        
+            values = df_acc_evo[col_name].dropna()
+        
+            if len(values) < 2:
+                cols[i].metric(col_name, fmt_eur(values.iloc[-1]))
+                continue
+        
+            current = values.iloc[-1]
+            start = values.iloc[0]
+        
+            perf_pct = ((current / start) - 1) * 100 if start > 0 else 0
+            perf_val = current - start
+        
+            cols[i].metric(
+                col_name,
+                fmt_eur(current),
+                f"{fmt_pct(perf_pct)} · {fmt_eur(perf_val)}",
+                delta_color=color_metric(perf_pct)
+            )
     
         fig_acc = go.Figure()
     
