@@ -1302,9 +1302,14 @@ def page_vue_globale():
             cols[i].metric(
                 col_name,
                 fmt_eur(current),
-                delta=f"{perf_pct:+.2f} %",
+                delta=round(perf_pct, 2),
                 delta_color="normal" if perf_pct >= 0 else "inverse"
             )
+            
+            cols[i].caption(
+                f"{'🟢' if perf_pct >= 0 else '🔴'} {perf_pct:+.2f}% · {fmt_eur(perf_val)}"
+            )
+
 
         
         # ✅ UNE SEULE boucle pour les %
