@@ -1305,7 +1305,7 @@ def page_vue_globale():
     
             pct = (current / total * 100) if total > 0 else 0
     
-           cols[i].metric(
+            cols[i].metric(
                 col_name,
                 fmt_eur(current),
                 delta=f"{perf_pct:+.2f}% • {fmt_eur(perf_val)} • {pct:.1f}% du total",
