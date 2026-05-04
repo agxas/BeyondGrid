@@ -239,6 +239,29 @@ def compute_kpis(df_snap: pd.DataFrame) -> dict:
         "perf_since_start": perf_since_start,
     }
 
+def compute_perf_over_period(df_snap: pd.DataFrame, months: int) -> float:
+    """
+    Calcule la performance (%) sur une période donnée en mois.
+    """
+    if df_snap.empty or len(df_snap) < 2:
+        return 0.0
+
+    latest_date = df_snap["date"].max()
+    start_date = latest_date - pd.DateOffset(months=months)
+
+    df_period = df_snap[df_snap["date"] >= start_date]
+
+    if len(df_period) < 2:
+        return 0.0
+
+    start_value = float(df_period.iloc[0]["total_value"])
+    end_value = float(df_period.iloc[-1]["total_value"])
+
+    if start_value == 0:
+        return 0.0
+
+    return (end_value / start_value - 1) * 100
+
 
 def compute_fire(kpis: dict, settings: dict) -> dict:
     """
@@ -883,6 +906,19 @@ def page_vue_globale():
     )
 
     st.divider()
+
+    # ── Performance par période ───────────────────────────────
+    st.subheader("📅 Performance récente")
+    
+    perf_1m  = compute_perf_over_period(df_snap, 1)
+    perf_3m  = compute_perf_over_period(df_snap, 3)
+    perf_12m = compute_perf_over_period(df_snap, 12)
+    
+    col1, col2, col3 = st.columns(3)
+    
+    col1.metric("1 mois", f"{perf_1m:+.2f} %")
+    col2.metric("3 mois", f"{perf_3m:+.2f} %")
+    col3.metric("1 an", f"{perf_12m:+.2f} %")
 
     # ── FIRE ───────────────────────────────────────────────────
     st.subheader("🎯 Objectif FIRE")
