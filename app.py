@@ -1528,7 +1528,6 @@ def page_analyses():
             ecart,
             is_percent=True,
         )
-        st.caption("✅ Tu bats le Livret A" if ecart >= 0 else "⚠️ Sous le Livret A")
 
     st.plotly_chart(fig_la, use_container_width=True)
 
@@ -1581,7 +1580,6 @@ def page_analyses():
                     ecart,
                     is_percent=True,
                 )
-                st.caption("✅ Tu bats le benchmark" if ecart >= 0 else "⚠️ Sous le benchmark")
         else:
             col2.warning("Données benchmark indisponibles")
 
@@ -1660,8 +1658,6 @@ def page_analyses():
                 gain_pct,
                 is_percent=True,
             )
-            st.caption(f"{gain_pct:+.0f}% du capital")
-
 
         # Ligne FIRE sur le graphique si target définie
         if fire_target > 0:
