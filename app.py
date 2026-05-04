@@ -31,8 +31,12 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "1.4"
+APP_VERSION = "1.5"
 PATCH_NOTES = {
+    "1.5": [
+        "Ajout de la répartition du portefeuille (classe d’actifs et géographie)",
+        "Visualisation en graphique donut interactive",
+    ],
     "1.4": [
         "Ajout de l’historique des transactions avec filtres",
         "Affichage du nom des assets au lieu des IDs",
@@ -956,6 +960,29 @@ def compute_rebalancing_orders(
 
     return df_summary, orders, warnings_list
 
+def compute_allocation(df_positions: pd.DataFrame, df_assets: pd.DataFrame):
+    """
+    Retourne la répartition par classe d'actifs et géographie
+    """
+    if df_positions.empty or df_assets.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    df = df_positions.merge(
+        df_assets[["id", "asset_class", "geography"]],
+        left_on="asset_id",
+        right_on="id",
+        how="left"
+    )
+
+    # fallback si valeurs nulles
+    df["asset_class"] = df["asset_class"].fillna("Autre")
+    df["geography"] = df["geography"].fillna("Autre")
+
+    by_class = df.groupby("asset_class")["value"].sum().reset_index()
+    by_geo   = df.groupby("geography")["value"].sum().reset_index()
+
+    return by_class, by_geo
+
 
 # ============================================================
 # 4. PAGES
@@ -1408,6 +1435,46 @@ def page_reequilibrage():
         return
 
     total_pea     = df_positions["value"].sum()
+
+    st.divider()
+    st.subheader("📊 Répartition du portefeuille")
+    
+    by_class, by_geo = compute_allocation(df_positions, df_assets)
+    
+    col1, col2 = st.columns(2)
+    
+    # ── Classe d'actifs ─────────────────────────────
+    if not by_class.empty:
+        fig_class = go.Figure(go.Pie(
+            labels=by_class["asset_class"],
+            values=by_class["value"],
+            hole=0.4,
+            textinfo="label+percent"
+        ))
+    
+        fig_class.update_layout(
+            title="Classe d'actifs",
+            margin=dict(l=0, r=0, t=40, b=0),
+        )
+    
+        col1.plotly_chart(fig_class, use_container_width=True)
+    
+    # ── Géographie ─────────────────────────────
+    if not by_geo.empty:
+        fig_geo = go.Figure(go.Pie(
+            labels=by_geo["geography"],
+            values=by_geo["value"],
+            hole=0.4,
+            textinfo="label+percent"
+        ))
+    
+        fig_geo.update_layout(
+            title="Géographie",
+            margin=dict(l=0, r=0, t=40, b=0),
+        )
+    
+        col2.plotly_chart(fig_geo, use_container_width=True)
+
 
     # ── Infos compte ───────────────────────────────────────────
     col2, col3 = st.columns(2)
