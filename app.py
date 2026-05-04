@@ -1180,7 +1180,7 @@ def page_vue_globale():
     
     if not df_positions_global.empty:
     
-        by_class, by_geo = compute_allocation(df_positions_global, df_assets)
+        by_class, by_geo = compute_allocation(df_positions_global)
     
         col1, col2 = st.columns(2)
     
