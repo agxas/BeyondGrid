@@ -1277,7 +1277,8 @@ def page_vue_globale():
     if not df_acc_evo.empty:
     
         cols = st.columns(len(df_acc_evo.columns))
-
+        
+        # ✅ boucle KPI
         for i, col_name in enumerate(df_acc_evo.columns):
         
             values = df_acc_evo[col_name].dropna()
@@ -1295,17 +1296,19 @@ def page_vue_globale():
             cols[i].metric(
                 col_name,
                 fmt_eur(current),
-                f"{fmt_pct(perf_pct)} · {fmt_eur(perf_val)}",
-                delta_color=color_metric(perf_pct)
+                delta=f"{fmt_pct(perf_pct)} · {fmt_eur(perf_val)}",
+                delta_color="normal" if perf_pct >= 0 else "inverse"
             )
-            total = df_acc_evo.iloc[-1].sum()
-
-            for i, col_name in enumerate(df_acc_evo.columns):
-                val = df_acc_evo[col_name].iloc[-1]
-                pct = (val / total * 100) if total > 0 else 0
+        
+        # ✅ UNE SEULE boucle pour les %
+        total = df_acc_evo.iloc[-1].sum()
+        
+        for i, col_name in enumerate(df_acc_evo.columns):
+            val = df_acc_evo[col_name].iloc[-1]
+            pct = (val / total * 100) if total > 0 else 0
+        
+            cols[i].caption(f"{pct:.1f} % du patrimoine")
             
-                cols[i].caption(f"{pct:.1f} % du patrimoine")
-    
         fig_acc = go.Figure()
     
         colors = ["#4C9BE8", "#2ECC71", "#F5A623", "#9B59B6"]
