@@ -1305,28 +1305,12 @@ def page_vue_globale():
     
             pct = (current / total * 100) if total > 0 else 0
     
-            # ✅ metric (couleur OK car float)
-            cols[i].metric(
+           cols[i].metric(
                 col_name,
                 fmt_eur(current),
-                delta=f"{perf_pct:+.2f}%"
+                delta=f"{perf_pct:+.2f}% • {fmt_eur(perf_val)} • {pct:.1f}% du total",
                 delta_color="normal" if perf_pct >= 0 else "inverse"
             )
-    
-            color = "#00c853" if perf_pct >= 0 else "#ff4b4b"
-
-            cols[i].markdown(
-                f"""
-                <div style='text-align:center; font-size:13px; margin-top:-6px; line-height:1.4'>
-                    <span style='color:{color}; font-weight:500'>
-                        {perf_pct:+.2f}% • {fmt_eur(perf_val)}
-                    </span><br>
-                    <span style='color:#888'>{pct:.1f}% du patrimoine</span>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
 
     # ── Drawdown ───────────────────────────────────────────────
     st.subheader("📉 Drawdown")
