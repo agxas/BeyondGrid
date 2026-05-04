@@ -14,6 +14,7 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import plotly.graph_objects as go
+import math
 from supabase import create_client
 
 # ============================================================
@@ -795,7 +796,6 @@ def compute_rebalancing_orders(
 
 
     # ── ÉTAPE 5 : arrondi au multiple de 5€ supérieur ──────────
-    import math
 
     orders = []
     for _, row in df_eligible.iterrows():
