@@ -59,6 +59,19 @@ def fmt_eur(x: float) -> str:
     """Formate un montant en euros avec séparateurs de milliers français."""
     return f"{x:,.0f} €".replace(",", " ")
 
+def fmt_pct(x: float) -> str:
+    """
+    Formate un pourcentage avec signe +/-
+    """
+    return f"{x:+.2f} %"
+
+
+def color_metric(value: float) -> str:
+    """
+    Retourne 'normal' (vert) ou 'inverse' (rouge) pour Streamlit.
+    """
+    return "normal" if value >= 0 else "inverse"
+
 
 # Options de période partagées entre toutes les pages
 PERIODE_OPTIONS  = ["1 mois", "3 mois", "6 mois", "1 an", "3 ans", "Tout"]
@@ -897,8 +910,8 @@ def page_vue_globale():
     col3.metric(
         "Plus-value latente",
         fmt_eur(kpis["plus_value"]),
-        f"{kpis['perf_pct']:+.2f} %",
-        delta_color="normal",
+        fmt_pct(kpis["perf_pct"]),
+        delta_color=color_metric(kpis["perf_pct"]),
     )
     col4.metric(
         "Cash disponible",
@@ -916,9 +929,23 @@ def page_vue_globale():
     
     col1, col2, col3 = st.columns(3)
     
-    col1.metric("1 mois", f"{perf_1m:+.2f} %")
-    col2.metric("3 mois", f"{perf_3m:+.2f} %")
-    col3.metric("1 an", f"{perf_12m:+.2f} %")
+    col1.metric(
+    "1 mois",
+    fmt_pct(perf_1m),
+    delta_color=color_metric(perf_1m),
+    )
+    
+    col2.metric(
+        "3 mois",
+        fmt_pct(perf_3m),
+        delta_color=color_metric(perf_3m),
+    )
+    
+    col3.metric(
+        "1 an",
+        fmt_pct(perf_12m),
+        delta_color=color_metric(perf_12m),
+    )
 
     st.divider()
 
