@@ -1309,15 +1309,18 @@ def page_vue_globale():
             cols[i].metric(
                 col_name,
                 fmt_eur(current),
-                delta=round(perf_pct, 2),
+                delta=f"{perf_pct:+.2f}%"
                 delta_color="normal" if perf_pct >= 0 else "inverse"
             )
     
-            # ✅ ✅ HTML COMPLET (corrigé)
+            color = "#00c853" if perf_pct >= 0 else "#ff4b4b"
+
             cols[i].markdown(
                 f"""
-                <div style='text-align:center; font-size:13px; margin-top:-6px'>
-                    {perf_pct:+.2f}% • {fmt_eur(perf_val)}<br>
+                <div style='text-align:center; font-size:13px; margin-top:-6px; line-height:1.4'>
+                    <span style='color:{color}; font-weight:500'>
+                        {perf_pct:+.2f}% • {fmt_eur(perf_val)}
+                    </span><br>
                     <span style='color:#888'>{pct:.1f}% du patrimoine</span>
                 </div>
                 """,
