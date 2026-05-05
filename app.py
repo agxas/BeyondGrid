@@ -1294,7 +1294,7 @@ def page_vue_globale():
 
     # ── KPIs principaux ────────────────────────────────────────
     st.subheader("Situation actuelle")
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         display_kpi(
@@ -1323,12 +1323,6 @@ def page_vue_globale():
             fmt_eur(kpis["plus_value"]),
             kpis["perf_pct"],
             is_percent=True,
-        )
-    
-    with col4:
-        display_kpi(
-            "Cash disponible",
-            fmt_eur(kpis["cash"]),
         )
 
     st.divider()
