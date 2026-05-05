@@ -31,8 +31,13 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "2.1"
+APP_VERSION = "2.2"
 PATCH_NOTES = {
+    "2.2": [
+        "Nettoyage : suppression du dict orphelin dans compute_global_positions",
+        "Ajout : tableau de performance par année calendaire (YTD + historique)",
+        "Ajout : résumé des flux financiers en tête de l'historique transactions",
+    ],
     "2.1": [
         "Correction : TypeError potentiel sur les labels Sharpe/Volatilité (valeur None)",
         "Correction : IndexError dans le filtre par compte de l'historique transactions",
@@ -2215,6 +2220,22 @@ def page_transactions():
     if df_txn.empty:
         st.info("Aucune transaction enregistrée.")
         return
+
+    # ── Résumé des flux ───────────────────────────────────────
+    st.subheader("📊 Résumé des flux")
+
+    total_deposits   = df_txn[df_txn["type"] == "deposit"]["total_amount"].sum()
+    total_withdrawals = abs(df_txn[df_txn["type"] == "withdrawal"]["total_amount"].sum())
+    total_dividends  = df_txn[df_txn["type"] == "dividend"]["total_amount"].sum()
+    total_fees       = abs(df_txn[df_txn["type"] == "fee"]["total_amount"].sum())
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total dépôts",    fmt_eur(total_deposits))
+    col2.metric("Total retraits",  fmt_eur(total_withdrawals))
+    col3.metric("Total dividendes",fmt_eur(total_dividends))
+    col4.metric("Total frais",     fmt_eur(total_fees))
+
+    st.divider()
 
     # ── Filtres ───────────────────────────────────────────────
     st.subheader("Filtres")
