@@ -1119,6 +1119,83 @@ def compute_global_positions(df_txn: pd.DataFrame, df_assets: pd.DataFrame) -> p
 
     return df_pos.reset_index(drop=True)
 
+def compute_positions_with_pru(
+    df_txn: pd.DataFrame,
+    df_assets: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Reconstruit toutes les positions avec leur PRU (Prix de Revient Unitaire)
+    via la méthode PRMP et calcule la plus-value latente par ligne.
+
+    Retourne : name | asset_class | quantity | pru | last_known_price
+               | value | invested | pv_latente | pv_pct
+    """
+    trades = df_txn[
+        df_txn["type"].isin(["buy", "sell"]) &
+        df_txn["asset_id"].notna()
+    ].copy().sort_values("date")
+
+    if trades.empty:
+        return pd.DataFrame()
+
+    rows = []
+
+    for asset_id, group in trades.groupby("asset_id"):
+        qty_held   = 0.0
+        total_cost = 0.0
+
+        for _, row in group.iterrows():
+            qty   = float(row["quantity"] or 0)
+            price = float(row["unit_price"] or 0)
+            fees  = float(row["fees"] or 0)
+
+            if row["type"] == "buy":
+                total_cost += qty * price + fees
+                qty_held   += qty
+            elif row["type"] == "sell" and qty_held > 0:
+                avg_cost    = total_cost / qty_held
+                total_cost -= avg_cost * min(qty, qty_held)
+                qty_held    = max(0.0, qty_held - qty)
+
+        if qty_held < 1e-9:
+            continue
+
+        pru = total_cost / qty_held if qty_held > 0 else 0.0
+
+        asset_row     = df_assets[df_assets["id"] == asset_id]
+        if asset_row.empty:
+            continue
+
+        name          = asset_row.iloc[0]["name"]
+        asset_class   = asset_row.iloc[0]["asset_class"]
+        current_price = float(asset_row.iloc[0]["last_known_price"] or 0)
+        value         = qty_held * current_price
+        invested      = qty_held * pru
+        pv_latente    = value - invested
+        pv_pct        = (pv_latente / invested * 100) if invested > 0 else 0.0
+
+        rows.append({
+            "name":              name,
+            "asset_class":       asset_class or "Autre",
+            "quantity":          round(qty_held, 4),
+            "pru":               round(pru, 4),
+            "last_known_price":  round(current_price, 4),
+            "value":             round(value, 2),
+            "invested":          round(invested, 2),
+            "pv_latente":        round(pv_latente, 2),
+            "pv_pct":            round(pv_pct, 2),
+        })
+
+    if not rows:
+        return pd.DataFrame()
+
+    return (
+        pd.DataFrame(rows)
+        .sort_values("value", ascending=False)
+        .reset_index(drop=True)
+    )
+
+
 def compute_total_amount(
     type_: str,
     quantity: float,
@@ -1398,6 +1475,60 @@ def page_vue_globale():
     col_dd2.metric("Niveau de risque", dd_label)
 
     st.plotly_chart(fig_dd, use_container_width=True)
+
+    # ── Tableau des positions ──────────────────────────────────
+    st.divider()
+    st.subheader("📋 Positions détaillées")
+
+    df_txn_full = fetch_transactions()
+    df_assets   = fetch_assets()
+    df_positions_detail = compute_positions_with_pru(df_txn_full, df_assets)
+
+    if df_positions_detail.empty:
+        st.info("Aucune position ouverte.")
+    else:
+        # KPI rapide : nb lignes + plus-value totale
+        total_pv = df_positions_detail["pv_latente"].sum()
+        total_invested_pos = df_positions_detail["invested"].sum()
+        pv_pct_global = (total_pv / total_invested_pos * 100) if total_invested_pos > 0 else 0.0
+
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Lignes ouvertes", len(df_positions_detail))
+        col2.metric(
+            "Plus-value latente totale",
+            fmt_eur(total_pv),
+            f"{pv_pct_global:+.2f} %",
+        )
+        col3.metric(
+            "Capital investi (positions)",
+            fmt_eur(total_invested_pos),
+        )
+
+        # Mise en forme du tableau
+        df_display = df_positions_detail.copy()
+        df_display["PRU"]            = df_display["pru"].map(lambda x: f"{x:.2f} €")
+        df_display["Prix actuel"]    = df_display["last_known_price"].map(lambda x: f"{x:.2f} €")
+        df_display["Valeur"]         = df_display["value"].map(fmt_eur)
+        df_display["Investi"]        = df_display["invested"].map(fmt_eur)
+        df_display["PV latente"]     = df_display["pv_latente"].map(
+            lambda x: f"{x:+,.0f} €".replace(",", " ")
+        )
+        df_display["PV %"]           = df_display["pv_pct"].map(lambda x: f"{x:+.2f} %")
+
+        df_display = df_display.rename(columns={
+            "name":        "Asset",
+            "asset_class": "Classe",
+            "quantity":    "Quantité",
+        })
+
+        df_display = df_display[[
+            "Asset", "Classe", "Quantité",
+            "PRU", "Prix actuel",
+            "Investi", "Valeur",
+            "PV latente", "PV %",
+        ]]
+
+        st.dataframe(df_display, use_container_width=True, hide_index=True)
 
     st.divider()
     st.caption(
