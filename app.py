@@ -1447,14 +1447,14 @@ def page_analyses():
         sharpe_display     = safe_value(sharpe)
 
         sharpe_label = (
-            "🟢 Excellent"  if sharpe >= 2  else
-            "🟢 Bon"        if sharpe >= 1  else
-            "🟡 Acceptable" if sharpe >= 0  else
+            "🟢 Excellent"  if sharpe_display >= 2  else
+            "🟢 Bon"        if sharpe_display >= 1  else
+            "🟡 Acceptable" if sharpe_display >= 0  else
             "🔴 Négatif"
         )
         vol_label = (
-            "🟢 Faible"  if volatility < 10 else
-            "🟡 Modérée" if volatility < 20 else
+            "🟢 Faible"  if volatility_display < 10 else
+            "🟡 Modérée" if volatility_display < 20 else
             "🔴 Élevée"
         )
 
