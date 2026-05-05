@@ -1338,7 +1338,8 @@ def page_vue_globale():
     st.subheader("🏦 Évolution par compte")
     
     df_snap_acc = fetch_snapshots_by_account()
-    df_acc_evo = compute_accounts_evolution(df_snap_acc)
+    df_snap_acc_filtered = filter_by_period(df_snap_acc, periode)
+    df_acc_evo = compute_accounts_evolution(df_snap_acc_filtered)
     
     if not df_acc_evo.empty:
         
