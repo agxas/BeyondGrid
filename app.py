@@ -31,8 +31,21 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "2.0"
+APP_VERSION = "2.1"
 PATCH_NOTES = {
+    "2.1": [
+        "Correction : TypeError potentiel sur les labels Sharpe/Volatilité (valeur None)",
+        "Correction : IndexError dans le filtre par compte de l'historique transactions",
+        "Correction : crash au démarrage si variables d'environnement Supabase manquantes",
+        "Correction : KPIs par compte désormais cohérents avec la période sélectionnée",
+        "Refactor : helper _slice_period mutualisé (perf, valeur, sparkline)",
+        "Refactor : positions PEA et globales recalculées avec groupby (plus performant)",
+        "Refactor : donuts d'allocation mutualisés via render_allocation_charts()",
+        "Refactor : format_perf() déplacée dans les utilitaires globaux",
+        "Refactor : page Rééquilibrage retourne tôt si DCA non défini (UX cohérente)",
+        "Ajout : export CSV dans l'historique des transactions",
+        "Ajout : indicateur de fraîcheur des données (alerte si snapshot > 2 jours ouvrés)",
+    ],
     "2.0": [
         "Refonte complète de l’interface utilisateur avec un système de composants KPI réutilisables",
         "Uniformisation de l’affichage sur l’ensemble du dashboard (performances, comptes, analyses)",
@@ -347,6 +360,21 @@ def compute_kpis(df_snap: pd.DataFrame) -> dict:
         "perf_pct":         perf_pct,
         "perf_since_start": perf_since_start,
     }
+
+def check_data_freshness(df_snap: pd.DataFrame) -> tuple[int, bool]:
+    """
+    Retourne (nb_jours_ouvrés_depuis_dernier_snapshot, is_stale).
+    is_stale = True si le dernier snapshot date de plus de 2 jours ouvrés.
+    """
+    if df_snap.empty:
+        return 0, False
+    last_date = df_snap["date"].max().date()
+    today = pd.Timestamp.today().date()
+    # Compte les jours ouvrés entre le dernier snapshot et aujourd'hui
+    business_days = pd.bdate_range(start=last_date, end=today)
+    # -1 car le jour du snapshot lui-même est compté
+    nb = max(0, len(business_days) - 1)
+    return nb, nb > 2
 
 def _slice_period(df_snap: pd.DataFrame, months: int) -> pd.DataFrame:
     """Retourne le sous-DataFrame correspondant aux X derniers mois. Vide si < 2 points."""
@@ -1123,6 +1151,13 @@ def page_vue_globale():
         return
 
     kpis = compute_kpis(df_snap)
+    nb_days, is_stale = check_data_freshness(df_snap)
+    if is_stale:
+        st.warning(
+            f"⚠️ Dernier snapshot il y a **{nb_days} jours ouvrés** "
+            f"({df_snap.iloc[-1]['date'].strftime('%d/%m/%Y')}) — "
+            "vérifie que GitHub Actions s'est bien déclenché."
+        )
     fire = compute_fire(kpis, settings)
 
     # ── KPIs principaux ────────────────────────────────────────
@@ -2191,6 +2226,15 @@ def page_transactions():
     ]]
 
     st.dataframe(df_display, use_container_width=True, hide_index=True)
+
+    csv = df_filtered.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="⬇️ Exporter en CSV",
+        data=csv,
+        file_name=f"transactions_{pd.Timestamp.today().strftime('%Y%m%d')}.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
 
 
 
