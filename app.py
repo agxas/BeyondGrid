@@ -366,6 +366,25 @@ def compute_kpis(df_snap: pd.DataFrame) -> dict:
         "perf_since_start": perf_since_start,
     }
 
+def compute_daily_change(df_snap: pd.DataFrame) -> tuple[float, float] | None:
+    """
+    Calcule la variation journalière (€ et %) entre les deux derniers snapshots.
+    Retourne None si pas assez de données.
+    """
+    if df_snap is None or len(df_snap) < 2:
+        return None
+
+    last = df_snap.iloc[-1]["total_value"]
+    prev = df_snap.iloc[-2]["total_value"]
+
+    if prev == 0:
+        return None
+
+    delta_eur = float(last - prev)
+    delta_pct = (last / prev - 1) * 100
+
+    return delta_eur, delta_pct
+
 def compute_annual_performance(df_snap: pd.DataFrame) -> pd.DataFrame:
     """
     Performance par année calendaire + YTD.
@@ -1263,6 +1282,7 @@ def page_vue_globale():
         return
 
     kpis = compute_kpis(df_snap)
+    daily_change = compute_daily_change(df_snap)
     nb_days, is_stale = check_data_freshness(df_snap)
     if is_stale:
         st.warning(
@@ -1281,6 +1301,15 @@ def page_vue_globale():
             "Valeur totale",
             fmt_eur(kpis["total_value"]),
         )
+    
+        if daily_change is not None:
+            delta_eur, delta_pct = daily_change
+            signe = "▲" if delta_eur >= 0 else "▼"
+            couleur = "#2ECC71" if delta_eur >= 0 else "#E84C4C"
+    
+            st.caption(
+                f"{signe} {fmt_eur(delta_eur)} aujourd’hui ({delta_pct:+.2f} %)",
+            )
     
     with col2:
         display_kpi(
