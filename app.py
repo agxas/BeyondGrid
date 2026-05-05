@@ -153,10 +153,12 @@ PERIODE_DEFAULT  = "1 an"   # index calculé dynamiquement depuis la liste
 
 @st.cache_resource
 def init_db():
-    return create_client(
-        os.environ["SUPABASE_URL"],
-        os.environ["SUPABASE_KEY"],
-    )
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_KEY")
+    if not url or not key:
+        st.error("❌ Variables d'environnement SUPABASE_URL / SUPABASE_KEY manquantes.")
+        st.stop()
+    return create_client(url, key)
 
 supabase = init_db()
 
