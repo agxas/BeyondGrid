@@ -799,49 +799,34 @@ def compute_pea_positions(
     df_assets: pd.DataFrame,
     account_id: int,
 ) -> pd.DataFrame:
-    """
-    Reconstruit les positions actuelles du PEA depuis les transactions.
-    Retourne un DataFrame :
-      asset_id | name | yahoo_ticker | last_known_price | quantity | value
-    """
     df_txn = df_transactions[
         (df_transactions["account_id"] == account_id) &
-        (df_transactions["asset_id"].notna())
+        (df_transactions["asset_id"].notna()) &
+        (df_transactions["type"].isin(["buy", "sell"]))
     ].copy()
 
     if df_txn.empty:
         return pd.DataFrame()
 
-    # Quantité nette par asset
-    positions = {}
-    for _, row in df_txn.iterrows():
-        aid = int(row["asset_id"])
-        qty = float(row["quantity"] or 0)
-        if row["type"] == "buy":
-            positions[aid] = positions.get(aid, 0) + qty
-        elif row["type"] == "sell":
-            positions[aid] = positions.get(aid, 0) - qty
+    # Quantité nette vectorisée : buy = +qty, sell = -qty
+    df_txn["signed_qty"] = df_txn["quantity"].fillna(0).astype(float)
+    df_txn.loc[df_txn["type"] == "sell", "signed_qty"] *= -1
 
-    # Filtrer les positions > 0
-    positions = {k: v for k, v in positions.items() if v > 1e-9}
+    df_pos = (
+        df_txn.groupby("asset_id")["signed_qty"]
+        .sum()
+        .reset_index()
+        .rename(columns={"signed_qty": "quantity"})
+    )
 
-    if not positions:
+    # Filtrer les positions nulles ou négatives
+    df_pos = df_pos[df_pos["quantity"] > 1e-9]
+
+    if df_pos.empty:
         return pd.DataFrame()
 
-    # Enrichir avec les infos assets
-    df_pos = pd.DataFrame([
-        {"asset_id": k, "quantity": v}
-        for k, v in positions.items()
-    ])
     df_pos = df_pos.merge(
-    df_assets[[
-        "id",
-        "name",
-        "yahoo_ticker",
-        "last_known_price",
-        "asset_class",
-        "geography"
-    ]],
+        df_assets[["id", "name", "yahoo_ticker", "last_known_price", "asset_class", "geography"]],
         left_on="asset_id", right_on="id", how="left"
     ).drop(columns=["id"])
 
@@ -1044,25 +1029,20 @@ def compute_global_positions(df_txn: pd.DataFrame, df_assets: pd.DataFrame) -> p
 
     positions = {}
 
-    for _, row in df_txn.iterrows():
-        aid = int(row["asset_id"])
-        qty = float(row["quantity"] or 0)
+    df_txn = df_txn[df_txn["type"].isin(["buy", "sell"])].copy()
+    df_txn["signed_qty"] = df_txn["quantity"].fillna(0).astype(float)
+    df_txn.loc[df_txn["type"] == "sell", "signed_qty"] *= -1
 
-        if row["type"] == "buy":
-            positions[aid] = positions.get(aid, 0) + qty
-        elif row["type"] == "sell":
-            positions[aid] = positions.get(aid, 0) - qty
+    df_pos = (
+        df_txn.groupby("asset_id")["signed_qty"]
+        .sum()
+        .reset_index()
+        .rename(columns={"signed_qty": "quantity"})
+    )
+    df_pos = df_pos[df_pos["quantity"] > 1e-9]
 
-    # garder uniquement les positions > 0
-    positions = {k: v for k, v in positions.items() if v > 1e-9}
-
-    if not positions:
+    if df_pos.empty:
         return pd.DataFrame()
-
-    df_pos = pd.DataFrame([
-        {"asset_id": k, "quantity": v}
-        for k, v in positions.items()
-    ])
 
     df_pos = df_pos.merge(
         df_assets[["id", "name", "asset_class", "geography", "last_known_price"]],
@@ -1668,34 +1648,28 @@ def page_reequilibrage():
     pea_id        = int(pea_account["id"])
 
     # Positions actuelles
-    df_positions  = compute_pea_positions(df_txn, df_assets, pea_id)
+    df_positions = compute_pea_positions(df_txn, df_assets, pea_id)
 
     if df_positions.empty:
         st.warning("Aucune position trouvée sur le PEA. Vérifie tes transactions.")
         return
 
-    total_pea     = df_positions["value"].sum()
-
-    st.divider()
-    st.subheader("📊 Répartition du portefeuille")
-    
-    by_class, by_geo = compute_allocation(df_positions)
-    
-    col1, col2 = st.columns(2)
-    render_allocation_charts(df_positions, col1, col2)
-
-
-    # ── Infos compte ───────────────────────────────────────────
-    col2, col3 = st.columns(2)
-    col2.metric("Valeur totale PEA", fmt_eur(total_pea))
-    col3.metric(
-        "DCA mensuel (settings)",
-        fmt_eur(dca_amount) if dca_amount > 0 else "⚠️ Non défini",
-    )
-
+    # Garde DCA avant tout rendu
     if dca_amount == 0:
         st.info("Définis ton DCA mensuel dans **Saisie manuelle** pour utiliser cette page.")
         return
+
+    total_pea = df_positions["value"].sum()
+
+    st.divider()
+    st.subheader("📊 Répartition du portefeuille")
+
+    col1, col2 = st.columns(2)
+    render_allocation_charts(df_positions, col1, col2)
+
+    col_a, col_b = st.columns(2)
+    col_a.metric("Valeur totale PEA", fmt_eur(total_pea))
+    col_b.metric("DCA mensuel (settings)", fmt_eur(dca_amount))
 
     st.divider()
 
