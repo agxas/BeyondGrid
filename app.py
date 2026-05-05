@@ -2252,7 +2252,11 @@ def page_transactions():
     df_filtered = df_txn.copy()
 
     if account_filter != "Tous":
-        account_id = df_accounts[df_accounts["name"] == account_filter]["id"].iloc[0]
+        match = df_accounts[df_accounts["name"] == account_filter]["id"]
+        if match.empty:
+            st.warning(f"Compte '{account_filter}' introuvable.")
+            return
+        account_id = match.iloc[0]
         df_filtered = df_filtered[df_filtered["account_id"] == account_id]
 
     if type_filter != "Tous":
