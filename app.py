@@ -1050,14 +1050,13 @@ def compute_global_positions(df_txn: pd.DataFrame, df_assets: pd.DataFrame) -> p
     """
     Reconstruit toutes les positions (tous comptes confondus)
     """
-    df_txn = df_txn[df_txn["asset_id"].notna()].copy()
+    df_txn = df_txn[
+        df_txn["asset_id"].notna() &
+        df_txn["type"].isin(["buy", "sell"])
+    ].copy()
 
     if df_txn.empty:
         return pd.DataFrame()
-
-    positions = {}
-
-    df_txn = df_txn[df_txn["type"].isin(["buy", "sell"])].copy()
     df_txn["signed_qty"] = df_txn["quantity"].fillna(0).astype(float)
     df_txn.loc[df_txn["type"] == "sell", "signed_qty"] *= -1
 
