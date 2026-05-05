@@ -361,6 +361,37 @@ def compute_kpis(df_snap: pd.DataFrame) -> dict:
         "perf_since_start": perf_since_start,
     }
 
+def compute_annual_performance(df_snap: pd.DataFrame) -> pd.DataFrame:
+    """
+    Performance par année calendaire + YTD.
+    Retourne : Année | Début | Fin | Perf % | Perf €
+    Trié du plus récent au plus ancien.
+    """
+    if df_snap.empty or len(df_snap) < 2:
+        return pd.DataFrame()
+
+    df = df_snap.copy()
+    df["year"] = df["date"].dt.year
+    current_year = pd.Timestamp.today().year
+
+    rows = []
+    for year, group in df.groupby("year"):
+        group = group.sort_values("date")
+        start_val = float(group.iloc[0]["total_value"])
+        end_val   = float(group.iloc[-1]["total_value"])
+        perf_pct  = (end_val / start_val - 1) * 100 if start_val > 0 else 0.0
+        perf_eur  = end_val - start_val
+        rows.append({
+            "Année":   "YTD" if year == current_year else str(year),
+            "Début":   start_val,
+            "Fin":     end_val,
+            "Perf %":  round(perf_pct, 2),
+            "Perf €":  round(perf_eur, 2),
+        })
+
+    # Plus récent en premier
+    return pd.DataFrame(rows).iloc[::-1].reset_index(drop=True)
+
 def check_data_freshness(df_snap: pd.DataFrame) -> tuple[int, bool]:
     """
     Retourne (nb_jours_ouvrés_depuis_dernier_snapshot, is_stale).
@@ -1393,6 +1424,41 @@ def page_analyses():
         )
 
     df_filtered = filter_by_period(df_snap, periode)
+
+    st.divider()
+
+    # ── Performance annuelle ───────────────────────────────────
+    st.subheader("📅 Performance par année")
+
+    df_annual = compute_annual_performance(df_snap)
+
+    if not df_annual.empty:
+
+        def color_perf_row(val):
+            if isinstance(val, float):
+                if val > 0:
+                    return "color: #2ECC71"
+                elif val < 0:
+                    return "color: #E84C4C"
+            return ""
+
+        df_annual_display = df_annual.copy()
+        df_annual_display["Début"] = df_annual_display["Début"].map(fmt_eur)
+        df_annual_display["Fin"]   = df_annual_display["Fin"].map(fmt_eur)
+        df_annual_display["Perf €"] = df_annual_display["Perf €"].map(
+            lambda x: f"{x:+,.0f} €".replace(",", " ")
+        )
+        df_annual_display["Perf %"] = df_annual_display["Perf %"].map(
+            lambda x: f"{x:+.2f} %"
+        )
+
+        st.dataframe(
+            df_annual_display,
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info("Pas encore assez de données pour calculer les performances annuelles.")
 
     st.divider()
 
