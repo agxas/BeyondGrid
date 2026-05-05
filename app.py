@@ -99,6 +99,12 @@ def fmt_pct(x: float) -> str:
         x = 0.0
     return f"{x:+.2f} %"
 
+def format_perf(pct: float) -> str:
+    """Format adaptatif : 4 décimales si < 0.01 %, 2 sinon."""
+    if abs(pct) < 0.01:
+        return f"{pct:+.4f} %"
+    return f"{pct:+.2f} %"
+
 
 def display_kpi(label: str, value: str, delta: float | None = None, is_percent: bool = False):
     """
@@ -342,80 +348,41 @@ def compute_kpis(df_snap: pd.DataFrame) -> dict:
         "perf_since_start": perf_since_start,
     }
 
-def compute_perf_over_period(df_snap: pd.DataFrame, months: int) -> float:
-    """
-    Calcule la performance (%) sur une période donnée en mois.
-    """
+def _slice_period(df_snap: pd.DataFrame, months: int) -> pd.DataFrame:
+    """Retourne le sous-DataFrame correspondant aux X derniers mois. Vide si < 2 points."""
     if df_snap.empty or len(df_snap) < 2:
-        return 0.0
-
+        return pd.DataFrame()
     start_date = get_period_start(df_snap, months)
-
     df_period = df_snap[df_snap["date"] >= start_date]
+    return df_period if len(df_period) >= 2 else pd.DataFrame()
 
-    if len(df_period) < 2:
+def compute_perf_over_period(df_snap: pd.DataFrame, months: int) -> float:
+    df_period = _slice_period(df_snap, months)
+    if df_period.empty:
         return 0.0
-
     start_value = float(df_period.iloc[0]["total_value"])
-    end_value = float(df_period.iloc[-1]["total_value"])
-
-    if start_value == 0:
-        return 0.0
-
-    return (end_value / start_value - 1) * 100
+    end_value   = float(df_period.iloc[-1]["total_value"])
+    return (end_value / start_value - 1) * 100 if start_value != 0 else 0.0
 
 def compute_perf_value_over_period(df_snap: pd.DataFrame, months: int) -> float:
-    """
-    Calcule la variation en € sur une période donnée.
-    """
-    if df_snap.empty or len(df_snap) < 2:
+    df_period = _slice_period(df_snap, months)
+    if df_period.empty:
         return 0.0
-
-    start_date = get_period_start(df_snap, months)
-
-    df_period = df_snap[df_snap["date"] >= start_date]
-
-    if len(df_period) < 2:
-        return 0.0
-
-    start_value = float(df_period.iloc[0]["total_value"])
-    end_value = float(df_period.iloc[-1]["total_value"])
-
-    return end_value - start_value
+    return float(df_period.iloc[-1]["total_value"]) - float(df_period.iloc[0]["total_value"])
 
 def compute_sparkline(df_snap: pd.DataFrame, months: int) -> str:
-    """
-    Génère une mini sparkline unicode à partir des valeurs de portefeuille.
-    """
-    if df_snap.empty or len(df_snap) < 2:
+    df_period = _slice_period(df_snap, months)
+    if df_period.empty:
         return ""
-
-    start_date = get_period_start(df_snap, months)
-
-    df_period = df_snap[df_snap["date"] >= start_date]
-
-    if len(df_period) < 2:
-        return ""
-
     values = df_period["total_value"].astype(float)
-
-    # Normalisation
-    min_v = values.min()
-    max_v = values.max()
-
-    if max_v - min_v == 0:
+    min_v, max_v = values.min(), values.max()
+    if max_v == min_v:
         return "▁" * len(values)
-
-    # caractères unicode (8 niveaux)
     ticks = "▁▂▃▄▅▆▇█"
-
-    spark = ""
-    for v in values:
-        idx = int((v - min_v) / (max_v - min_v) * (len(ticks) - 1))
-        spark += ticks[idx]
-
-    return spark
-
+    return "".join(
+        ticks[int((v - min_v) / (max_v - min_v) * (len(ticks) - 1))]
+        for v in values
+    )
 
 
 def compute_fire(kpis: dict, settings: dict) -> dict:
@@ -1048,6 +1015,24 @@ def compute_allocation(df_positions: pd.DataFrame):
 
     return by_class, by_geo
 
+def render_allocation_charts(df_positions: pd.DataFrame, col1, col2):
+    """Affiche les deux donuts classe d'actifs / géographie dans les colonnes fournies."""
+    by_class, by_geo = compute_allocation(df_positions)
+
+    for col, data, label_col, title in [
+        (col1, by_class, "asset_class", "Classe d'actifs"),
+        (col2, by_geo,   "geography",   "Géographie"),
+    ]:
+        if not data.empty:
+            fig = go.Figure(go.Pie(
+                labels=data[label_col],
+                values=data["value"],
+                hole=0.4,
+                textinfo="label+percent",
+            ))
+            fig.update_layout(title=title, margin=dict(l=0, r=0, t=40, b=0))
+            col.plotly_chart(fig, use_container_width=True)
+
 def compute_global_positions(df_txn: pd.DataFrame, df_assets: pd.DataFrame) -> pd.DataFrame:
     """
     Reconstruit toutes les positions (tous comptes confondus)
@@ -1280,37 +1265,7 @@ def page_vue_globale():
     
         col1, col2 = st.columns(2)
     
-        # Classe d'actifs
-        if not by_class.empty:
-            fig_class = go.Figure(go.Pie(
-                labels=by_class["asset_class"],
-                values=by_class["value"],
-                hole=0.4,
-                textinfo="label+percent"
-            ))
-    
-            fig_class.update_layout(
-                title="Classe d'actifs",
-                margin=dict(l=0, r=0, t=40, b=0),
-            )
-    
-            col1.plotly_chart(fig_class, use_container_width=True)
-    
-        # Géographie
-        if not by_geo.empty:
-            fig_geo = go.Figure(go.Pie(
-                labels=by_geo["geography"],
-                values=by_geo["value"],
-                hole=0.4,
-                textinfo="label+percent"
-            ))
-    
-            fig_geo.update_layout(
-                title="Géographie",
-                margin=dict(l=0, r=0, t=40, b=0),
-            )
-    
-            col2.plotly_chart(fig_geo, use_container_width=True)
+        render_allocation_charts(df_positions_global, col1, col2)
     
     else:
         st.info("Aucune position détectée.")
@@ -1512,11 +1467,6 @@ def page_analyses():
         df_filtered, risk_free_rate
     )
 
-    # FIX : format adaptatif selon la magnitude (évite +0.00% sur courtes périodes)
-    def format_perf(pct: float) -> str:
-        if abs(pct) < 0.01:
-            return f"{pct:+.4f} %"
-        return f"{pct:+.2f} %"
 
     col1, col2, col3 = st.columns(3)
     col1.metric("Performance portefeuille", format_perf(perf_portef))
@@ -1732,38 +1682,7 @@ def page_reequilibrage():
     by_class, by_geo = compute_allocation(df_positions)
     
     col1, col2 = st.columns(2)
-    
-    # ── Classe d'actifs ─────────────────────────────
-    if not by_class.empty:
-        fig_class = go.Figure(go.Pie(
-            labels=by_class["asset_class"],
-            values=by_class["value"],
-            hole=0.4,
-            textinfo="label+percent"
-        ))
-    
-        fig_class.update_layout(
-            title="Classe d'actifs",
-            margin=dict(l=0, r=0, t=40, b=0),
-        )
-    
-        col1.plotly_chart(fig_class, use_container_width=True)
-    
-    # ── Géographie ─────────────────────────────
-    if not by_geo.empty:
-        fig_geo = go.Figure(go.Pie(
-            labels=by_geo["geography"],
-            values=by_geo["value"],
-            hole=0.4,
-            textinfo="label+percent"
-        ))
-    
-        fig_geo.update_layout(
-            title="Géographie",
-            margin=dict(l=0, r=0, t=40, b=0),
-        )
-    
-        col2.plotly_chart(fig_geo, use_container_width=True)
+    render_allocation_charts(df_positions, col1, col2)
 
 
     # ── Infos compte ───────────────────────────────────────────
