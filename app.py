@@ -2252,14 +2252,12 @@ def page_saisie():
                 )
                 type_txn = st.selectbox(
                     "Type",
-                    options=["buy", "sell", "deposit", "withdrawal", "dividend", "fee"],
+                    options=["buy", "sell", "dividend", "fee"],
                     format_func=lambda x: {
-                        "buy":        "🟢 Achat",
-                        "sell":       "🔴 Vente",
-                        "deposit":    "💰 Dépôt",
-                        "withdrawal": "🏧 Retrait",
-                        "dividend":   "🎁 Dividende",
-                        "fee":        "💸 Frais",
+                        "buy":      "🟢 Achat",
+                        "sell":     "🔴 Vente",
+                        "dividend": "🎁 Dividende",
+                        "fee":      "💸 Frais",
                     }[x],
                     key="txn_type",
                 )
@@ -2400,16 +2398,16 @@ def page_transactions():
     # ── Résumé des flux ───────────────────────────────────────
     st.subheader("📊 Résumé des flux")
 
-    total_deposits   = df_txn[df_txn["type"] == "deposit"]["total_amount"].sum()
-    total_withdrawals = abs(df_txn[df_txn["type"] == "withdrawal"]["total_amount"].sum())
+    total_invested   = abs(df_txn[df_txn["type"] == "buy"]["total_amount"].sum())
+    total_sold       = df_txn[df_txn["type"] == "sell"]["total_amount"].sum()
     total_dividends  = df_txn[df_txn["type"] == "dividend"]["total_amount"].sum()
     total_fees       = abs(df_txn[df_txn["type"] == "fee"]["total_amount"].sum())
 
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total dépôts",    fmt_eur(total_deposits))
-    col2.metric("Total retraits",  fmt_eur(total_withdrawals))
-    col3.metric("Total dividendes",fmt_eur(total_dividends))
-    col4.metric("Total frais",     fmt_eur(total_fees))
+    col1.metric("Total investi (achats)",  fmt_eur(total_invested))
+    col2.metric("Total cédé (ventes)",     fmt_eur(total_sold))
+    col3.metric("Total dividendes",        fmt_eur(total_dividends))
+    col4.metric("Total frais",             fmt_eur(total_fees))
 
     st.divider()
 
