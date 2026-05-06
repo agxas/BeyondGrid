@@ -32,8 +32,14 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "3.4"
+APP_VERSION = "3.5"
 PATCH_NOTES = {
+    "3.5": [
+        "Ajout : rendement dividendes TTM — global (Vue Globale, Analyses, Vue par compte)",
+        "Ajout : colonne Rend. div. dans les tableaux de positions (Vue Globale, Vue par compte)",
+        "Amélioration : compute_dividends() enrichi avec TTM et by_asset_ttm",
+        "Amélioration : compute_positions_with_pru() retourne désormais asset_id",
+    ],
     "3.4": [
         "Correction : persistance cibles rééquilibrage via DB (settings.pea_targets) — session_state retiré",
         "Ajout : bouton Enregistrer les cibles avec sauvegarde en base Supabase",
@@ -1279,6 +1285,7 @@ def compute_positions_with_pru(
         pv_pct        = (pv_latente / invested * 100) if invested > 0 else 0.0
 
         rows.append({
+            "asset_id":          int(asset_id),
             "name":              name,
             "asset_class":       asset_class or "Autre",
             "quantity":          round(qty_held, 4),
@@ -1373,10 +1380,24 @@ def compute_dividends(
     div["asset_name"] = div["asset_id"].map(asset_map).fillna("Non précisé")
     div["year"]       = div["date"].dt.year
 
+    today        = pd.Timestamp.today()
     total        = float(div["total_amount"].sum())
-    current_year = pd.Timestamp.today().year
+    current_year = today.year
     ytd          = float(div[div["year"] == current_year]["total_amount"].sum())
     nb           = len(div)
+
+    # TTM (Trailing Twelve Months) — base du yield annualisé
+    ttm_start    = today - pd.DateOffset(years=1)
+    div_ttm      = div[div["date"] >= ttm_start]
+    ttm          = float(div_ttm["total_amount"].sum())
+
+    # Dividendes TTM par asset_id (pour yield par position)
+    by_asset_ttm: dict[int, float] = (
+        div_ttm.dropna(subset=["asset_id"])
+        .groupby(div_ttm["asset_id"].astype(int))["total_amount"]
+        .sum()
+        .to_dict()
+    )
 
     # ── Par asset (barres horizontales) ─────────────────────
     by_asset = (
@@ -1427,12 +1448,14 @@ def compute_dividends(
     )
 
     return {
-        "empty":     False,
-        "total":     total,
-        "ytd":       ytd,
-        "nb":        nb,
-        "fig_asset": fig_asset,
-        "fig_year":  fig_year,
+        "empty":        False,
+        "total":        total,
+        "ytd":          ytd,
+        "ttm":          ttm,
+        "nb":           nb,
+        "by_asset_ttm": by_asset_ttm,
+        "fig_asset":    fig_asset,
+        "fig_year":     fig_year,
     }
 
 
@@ -1617,9 +1640,16 @@ def page_vue_globale():
 
     # ── Dividendes (résumé compact) ───────────────────────────────
     if not div_data.get("empty"):
-        col_d1, col_d2, _ = st.columns([1, 1, 2])
+        yield_global = (
+            div_data["ttm"] / kpis["total_value"] * 100
+            if kpis["total_value"] > 0 else 0.0
+        )
+        col_d1, col_d2, col_d3 = st.columns(3)
         display_kpi_block(col_d1, "Dividendes reçus (total)", fmt_eur(div_data["total"]))
         display_kpi_block(col_d2, "Dividendes YTD",           fmt_eur(div_data["ytd"]))
+        display_kpi_block(col_d3, "Rendement dividendes (TTM)",
+                          f"{yield_global:.2f} %",
+                          help_text=None)
 
     # ── 5. Portefeuille — tabs Positions / Allocation ──────────────
     st.subheader("📋 Portefeuille")
@@ -1646,6 +1676,13 @@ def page_vue_globale():
 
             with st.expander("Voir le tableau détaillé"):
                 df_display = df_positions_detail.copy()
+                # Yield par position (dividendes TTM / valeur)
+                by_ttm = div_data.get("by_asset_ttm", {}) if not div_data.get("empty") else {}
+                df_display["div_ttm"]     = df_display["asset_id"].map(by_ttm).fillna(0.0)
+                df_display["Rend. div."]  = df_display.apply(
+                    lambda r: f"{r['div_ttm'] / r['value'] * 100:.2f} %"
+                    if r["value"] > 0 and r["div_ttm"] > 0 else "—", axis=1
+                )
                 df_display["PRU"]         = df_display["pru"].map(lambda x: f"{x:.2f} €")
                 df_display["Prix actuel"] = df_display["last_known_price"].map(
                     lambda x: f"{x:.2f} €"
@@ -1663,7 +1700,8 @@ def page_vue_globale():
                 })
                 df_display = df_display[[
                     "Asset", "Classe", "Quantité",
-                    "PRU", "Prix actuel", "Investi", "Valeur", "PV latente", "PV %",
+                    "PRU", "Prix actuel", "Investi", "Valeur",
+                    "PV latente", "PV %", "Rend. div.",
                 ]]
                 st.dataframe(df_display, use_container_width=True, hide_index=True)
 
@@ -2026,10 +2064,16 @@ def page_analyses():
         st.info("Aucun dividende enregistré. Saisis tes dividendes dans Saisie manuelle (type : Dividende).")
     else:
         # ── KPIs ────────────────────────────────────────────────
-        col1, col2, col3 = st.columns(3)
-        display_kpi_block(col1, "Total reçu (all time)", fmt_eur(div_data["total"]))
-        display_kpi_block(col2, "Reçu cette année (YTD)", fmt_eur(div_data["ytd"]))
-        display_kpi_block(col3, "Nombre de versements",  str(div_data["nb"]))
+        kpis_full   = compute_kpis(fetch_snapshots_agg())
+        yield_ttm   = (
+            div_data["ttm"] / kpis_full["total_value"] * 100
+            if kpis_full["total_value"] > 0 else 0.0
+        )
+        col1, col2, col3, col4 = st.columns(4)
+        display_kpi_block(col1, "Total reçu (all time)",    fmt_eur(div_data["total"]))
+        display_kpi_block(col2, "Reçu cette année (YTD)",  fmt_eur(div_data["ytd"]))
+        display_kpi_block(col3, "Rendement TTM",            f"{yield_ttm:.2f} %")
+        display_kpi_block(col4, "Nombre de versements",     str(div_data["nb"]))
 
         # ── Graphiques ──────────────────────────────────────────
         col_left, col_right = st.columns(2)
@@ -2159,6 +2203,12 @@ def page_compte():
 
             with st.expander("Voir le tableau détaillé"):
                 df_disp = df_pos.copy()
+                by_ttm_acc = div_acc.get("by_asset_ttm", {}) if not div_acc.get("empty") else {}
+                df_disp["div_ttm"]    = df_disp["asset_id"].map(by_ttm_acc).fillna(0.0)
+                df_disp["Rend. div."] = df_disp.apply(
+                    lambda r: f"{r['div_ttm'] / r['value'] * 100:.2f} %"
+                    if r["value"] > 0 and r["div_ttm"] > 0 else "—", axis=1
+                )
                 df_disp["PRU"]         = df_disp["pru"].map(lambda x: f"{x:.2f} €")
                 df_disp["Prix actuel"] = df_disp["last_known_price"].map(lambda x: f"{x:.2f} €")
                 df_disp["Valeur"]      = df_disp["value"].map(fmt_eur)
@@ -2172,7 +2222,8 @@ def page_compte():
                 })
                 df_disp = df_disp[[
                     "Asset", "Classe", "Quantité",
-                    "PRU", "Prix actuel", "Investi", "Valeur", "PV latente", "PV %",
+                    "PRU", "Prix actuel", "Investi", "Valeur",
+                    "PV latente", "PV %", "Rend. div.",
                 ]]
                 st.dataframe(df_disp, use_container_width=True, hide_index=True)
 
@@ -2188,10 +2239,15 @@ def page_compte():
         if div_acc.get("empty"):
             st.info("Aucun dividende enregistré pour ce compte.")
         else:
-            c1, c2, c3 = st.columns(3)
+            yield_acc = (
+                div_acc["ttm"] / total_value * 100
+                if total_value > 0 else 0.0
+            )
+            c1, c2, c3, c4 = st.columns(4)
             display_kpi_block(c1, "Total reçu",           fmt_eur(div_acc["total"]))
             display_kpi_block(c2, "Reçu cette année",     fmt_eur(div_acc["ytd"]))
-            display_kpi_block(c3, "Nombre de versements", str(div_acc["nb"]))
+            display_kpi_block(c3, "Rendement TTM",        f"{yield_acc:.2f} %")
+            display_kpi_block(c4, "Nombre de versements", str(div_acc["nb"]))
 
             col_l, col_r = st.columns(2)
             with col_l:
