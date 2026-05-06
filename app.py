@@ -31,8 +31,16 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "3.0"
+APP_VERSION = "3.1"
 PATCH_NOTES = {
+    "3.1": [
+        "Refonte Vue Globale : structure en 5 sections + tabs Évolution et Portefeuille",
+        "Suppression du drawdown de Vue Globale (déjà présent dans Analyses)",
+        "Perf par compte : corrigée des apports via Modified Dietz par compte",
+        "Correction : delta redondant supprimé sur Performance portefeuille (Livret A / Benchmark)",
+        "Nettoyage : perf_since_start supprimé de compute_kpis (jamais utilisé)",
+        "display_kpi / display_kpi_block : nouveau paramètre delta_color",
+    ],
     "3.0": [
         "Refonte du moteur de performance : toutes les métriques sont désormais nettes des apports en capital",
         "Ajout de _build_perf_index() : indice TWR-like (rendement ajusté jour par jour de ΔI_t)",
@@ -363,24 +371,17 @@ def compute_kpis(df_snap: pd.DataFrame) -> dict:
     """
     KPIs de base à partir des snapshots agrégés.
     """
-    latest = df_snap.iloc[-1]
+    latest           = df_snap.iloc[-1]
     total_value      = float(latest["total_value"])
     invested_capital = float(latest["invested_capital"])
     plus_value       = total_value - invested_capital
     perf_pct         = (plus_value / invested_capital * 100) if invested_capital > 0 else 0.0
-
-    first = df_snap.iloc[0]
-    perf_since_start = (
-        (float(latest["total_value"]) / float(first["total_value"]) - 1) * 100
-        if float(first["total_value"]) > 0 else 0.0
-    )
 
     return {
         "total_value":      total_value,
         "invested_capital": invested_capital,
         "plus_value":       plus_value,
         "perf_pct":         perf_pct,
-        "perf_since_start": perf_since_start,
     }
 
 def compute_daily_change(df_snap: pd.DataFrame) -> tuple[float, float] | None:
@@ -1343,17 +1344,20 @@ def page_vue_globale():
     st.title("📊 Synthèse du Patrimoine")
 
     with st.spinner("Chargement des données..."):
-        df_snap   = fetch_snapshots_agg()
-        settings  = fetch_settings()
-        df_txn    = fetch_transactions()
-        df_assets = fetch_assets()
+        df_snap     = fetch_snapshots_agg()
+        settings    = fetch_settings()
+        df_txn      = fetch_transactions()
+        df_assets   = fetch_assets()
+        df_snap_acc = fetch_snapshots_by_account()
 
     if df_snap.empty:
         st.warning("Aucun snapshot disponible. Lance le script de snapshot pour commencer.")
         return
 
-    kpis = compute_kpis(df_snap)
+    kpis         = compute_kpis(df_snap)
     daily_change = compute_daily_change(df_snap)
+    fire         = compute_fire(kpis, settings)
+
     nb_days, is_stale = check_data_freshness(df_snap)
     if is_stale:
         st.warning(
@@ -1361,132 +1365,41 @@ def page_vue_globale():
             f"({df_snap.iloc[-1]['date'].strftime('%d/%m/%Y')}) — "
             "vérifie que GitHub Actions s'est bien déclenché."
         )
-    fire = compute_fire(kpis, settings)
 
-    # ── KPIs principaux ────────────────────────────────────────
-    st.subheader("Situation actuelle")
+    # ── 1. Situation du jour ───────────────────────────────────────
     col1, col2, col3 = st.columns(3)
-
     with col1:
-        display_kpi(
-            "Valeur totale",
-            fmt_eur(kpis["total_value"]),
-        )
-    
+        display_kpi("Valeur totale", fmt_eur(kpis["total_value"]))
         if daily_change is not None:
             delta_eur, delta_pct = daily_change
             signe = "▲" if delta_eur >= 0 else "▼"
-            couleur = "#2ECC71" if delta_eur >= 0 else "#E84C4C"
-    
-            st.caption(
-                f"{signe} {fmt_eur(delta_eur)} aujourd’hui ({delta_pct:+.2f} %)",
-            )
-    
-    with col2:
-        display_kpi(
-            "Capital investi",
-            fmt_eur(kpis["invested_capital"]),
-        )
-    
-    with col3:
-        display_kpi(
-            "Plus-value latente",
-            fmt_eur(kpis["plus_value"]),
-            kpis["perf_pct"],
-            is_percent=True,
-        )
+            st.caption(f"{signe} {fmt_eur(delta_eur)} aujourd'hui ({delta_pct:+.2f} %)")
+    display_kpi_block(col2, "Capital investi", fmt_eur(kpis["invested_capital"]))
+    display_kpi_block(col3, "Plus-value latente", fmt_eur(kpis["plus_value"]),
+                      kpis["perf_pct"], is_percent=True)
 
-    st.divider()
-
-    # ── Performance par période ───────────────────────────────
+    # ── 2. Performance récente ─────────────────────────────────────
     st.subheader("📅 Performance récente")
-    
-    perf_1m  = compute_perf_over_period(df_snap, 1)
-    perf_3m  = compute_perf_over_period(df_snap, 3)
-    perf_12m = compute_perf_over_period(df_snap, 12)
-    val_1m  = compute_perf_value_over_period(df_snap, 1)
-    val_3m  = compute_perf_value_over_period(df_snap, 3)
-    val_12m = compute_perf_value_over_period(df_snap, 12)
+    perf_1m   = compute_perf_over_period(df_snap, 1)
+    perf_3m   = compute_perf_over_period(df_snap, 3)
+    perf_12m  = compute_perf_over_period(df_snap, 12)
+    val_1m    = compute_perf_value_over_period(df_snap, 1)
+    val_3m    = compute_perf_value_over_period(df_snap, 3)
+    val_12m   = compute_perf_value_over_period(df_snap, 12)
     spark_1m  = compute_sparkline(df_snap, 1)
     spark_3m  = compute_sparkline(df_snap, 3)
     spark_12m = compute_sparkline(df_snap, 12)
-    
+
     col1, col2, col3 = st.columns(3)
+    display_kpi_block(col1, "1 mois", fmt_pct(perf_1m),
+                      subline=f"{fmt_eur(val_1m)} • {spark_1m}")
+    display_kpi_block(col2, "3 mois", fmt_pct(perf_3m),
+                      subline=f"{fmt_eur(val_3m)} • {spark_3m}")
+    display_kpi_block(col3, "1 an",   fmt_pct(perf_12m),
+                      subline=f"{fmt_eur(val_12m)} • {spark_12m}")
 
-    display_kpi_block(
-        col1,
-        "1 mois",
-        fmt_pct(perf_1m),
-        subline=f"{fmt_eur(val_1m)} • {spark_1m}",
-    )
-    
-    display_kpi_block(
-        col2,
-        "3 mois",
-        fmt_pct(perf_3m),
-        subline=f"{fmt_eur(val_3m)} • {spark_3m}",
-    )
-    
-    display_kpi_block(
-        col3,
-        "1 an",
-        fmt_pct(perf_12m),
-        subline=f"{fmt_eur(val_12m)} • {spark_12m}",
-    )
-
-    st.divider()
-
-    # ── FIRE ───────────────────────────────────────────────────
-    st.subheader("🎯 Objectif FIRE")
-
-    if fire["fire_target"] > 0:
-        st.progress(
-            min(fire["fire_pct"] / 100, 1.0),
-            text=(
-                f"{fire['fire_pct']:.1f} % de l'objectif atteint "
-                f"({fmt_eur(kpis['total_value'])} / {fmt_eur(fire['fire_target'])})"
-            ),
-        )
-    else:
-        st.info("Objectif FIRE non défini — renseigne-le dans Saisie manuelle.")
-
-    col_f1, col_f2, col_f3 = st.columns(3)
-
-    with col_f1:
-        display_kpi(
-            "Revenu passif mensuel (4%)",
-            f"{fmt_eur(fire['passive_income_monthly'])}/mois",
-        )
-    
-    with col_f2:
-        display_kpi(
-            "Revenu passif annuel (4%)",
-            f"{fmt_eur(fire['passive_income_annual'])}/an",
-        )
-    if fire["freedom_days"] is not None:
-        col_f3.metric(
-            "Jours de liberté financière",
-            f"{fire['freedom_days']:,.0f} jours".replace(",", " "),
-        )
-    else:
-        col_f3.info("Définis ton revenu mensuel pour ce calcul.")
-
-    # ── Allocation globale ─────────────────────────────
-    st.divider()
-    st.subheader("📊 Allocation globale")
-
-    df_positions_global = compute_global_positions(df_txn, df_assets)
-
-    if not df_positions_global.empty:
-        col1, col2 = st.columns(2)
-        render_allocation_charts(df_positions_global, col1, col2)
-    else:
-        st.info("Aucune position détectée.")
-
-    # ── Graphique valeur vs capital ────────────────────────────
-    st.subheader("📈 Évolution du patrimoine")
-
-    
+    # ── 3. Évolution ───────────────────────────────────────────────
+    st.subheader("📈 Évolution")
 
     col_period, _ = st.columns([2, 5])
     with col_period:
@@ -1497,138 +1410,159 @@ def page_vue_globale():
             label_visibility="collapsed",
         )
 
-    df_filtered = filter_by_period(df_snap, periode)
-
-    fig = compute_perf_chart(df_filtered)
-    st.plotly_chart(fig, use_container_width=True)
-
-    # ── Vue par compte ─────────────────────────────────────────
-    st.subheader("🏦 Évolution par compte")
-
-    df_snap_acc          = fetch_snapshots_by_account()
+    df_filtered          = filter_by_period(df_snap, periode)
     df_snap_acc_filtered = filter_by_period(df_snap_acc, periode)
     df_acc_evo           = compute_accounts_evolution(df_snap_acc_filtered)
 
-    if not df_acc_evo.empty:
+    tab_global, tab_comptes = st.tabs(["📈 Patrimoine global", "🏦 Par compte"])
 
-        # KPIs par compte
-        total = df_acc_evo.iloc[-1].sum()
-        cols  = st.columns(len(df_acc_evo.columns))
+    with tab_global:
+        st.plotly_chart(compute_perf_chart(df_filtered), use_container_width=True)
 
-        for i, col_name in enumerate(df_acc_evo.columns):
-            values  = df_acc_evo[col_name].dropna()
-            current = float(values.iloc[-1])
-            pct     = (current / total * 100) if total > 0 else 0
+    with tab_comptes:
+        if df_acc_evo.empty:
+            st.info("Aucune donnée par compte.")
+        else:
+            total = df_acc_evo.iloc[-1].sum()
+            cols  = st.columns(len(df_acc_evo.columns))
 
-            if len(values) < 2:
-                with cols[i]:
-                    display_kpi(col_name, fmt_eur(current))
-                continue
+            for i, col_name in enumerate(df_acc_evo.columns):
+                values  = df_acc_evo[col_name].dropna()
+                current = float(values.iloc[-1])
+                pct     = (current / total * 100) if total > 0 else 0
 
-            start    = float(values.iloc[0])
-            perf_pct = ((current / start) - 1) * 100 if start > 0 else 0
-            perf_val = current - start
+                if len(values) < 2:
+                    with cols[i]:
+                        display_kpi(col_name, fmt_eur(current))
+                    continue
 
-            display_kpi_block(
-                cols[i],
-                col_name,
-                fmt_eur(current),
-                perf_pct,
-                is_percent=True,
-                subline=f"{fmt_eur(perf_val)} • {pct:.1f} %",
+                start = float(values.iloc[0])
+
+                # Perf ajustée : Modified Dietz par compte
+                acc_rows    = df_snap_acc_filtered[
+                    df_snap_acc_filtered["account_name"] == col_name
+                ].sort_values("date")
+                new_capital = (
+                    float(acc_rows.iloc[-1]["invested_capital"]) -
+                    float(acc_rows.iloc[0]["invested_capital"])
+                    if len(acc_rows) >= 2 else 0.0
+                )
+                perf_market_eur = current - start - new_capital
+                perf_pct        = (perf_market_eur / start * 100) if start > 0 else 0
+
+                display_kpi_block(
+                    cols[i], col_name, fmt_eur(current), perf_pct,
+                    is_percent=True,
+                    subline=f"{fmt_eur(perf_market_eur)} • {pct:.1f} %",
+                )
+
+            fig_acc = go.Figure()
+            for col_name in df_acc_evo.columns:
+                fig_acc.add_trace(go.Scatter(
+                    x=df_acc_evo.index,
+                    y=df_acc_evo[col_name].fillna(0),
+                    name=col_name,
+                    stackgroup="one",
+                    hovertemplate=f"{col_name} : %{{y:,.0f}} €<extra></extra>",
+                ))
+            fig_acc.update_layout(
+                height=300,
+                margin=dict(l=0, r=0, t=20, b=0),
+                hovermode="x unified",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                xaxis=dict(showgrid=False),
+                yaxis=dict(ticksuffix=" €", tickformat=",.0f", gridcolor="#f0f0f0"),
+                plot_bgcolor="white",
+                paper_bgcolor="rgba(0,0,0,0)",
             )
+            st.plotly_chart(fig_acc, use_container_width=True)
 
-        # Graphique en aires empilées
-        fig_acc = go.Figure()
-        for col_name in df_acc_evo.columns:
-            fig_acc.add_trace(go.Scatter(
-                x=df_acc_evo.index,
-                y=df_acc_evo[col_name].fillna(0),
-                name=col_name,
-                stackgroup="one",
-                hovertemplate=f"{col_name} : %{{y:,.0f}} €<extra></extra>",
-            ))
-        fig_acc.update_layout(
-            height=300,
-            margin=dict(l=0, r=0, t=20, b=0),
-            hovermode="x unified",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-            xaxis=dict(showgrid=False),
-            yaxis=dict(ticksuffix=" €", tickformat=",.0f", gridcolor="#f0f0f0"),
-            plot_bgcolor="white",
-            paper_bgcolor="rgba(0,0,0,0)",
+    # ── 4. Objectif FIRE ──────────────────────────────────────────
+    st.subheader("🎯 Objectif FIRE")
+
+    if fire["fire_target"] > 0:
+        st.progress(
+            min(fire["fire_pct"] / 100, 1.0),
+            text=(
+                f"{fire['fire_pct']:.1f} % — "
+                f"{fmt_eur(kpis['total_value'])} / {fmt_eur(fire['fire_target'])}"
+            ),
         )
-        st.plotly_chart(fig_acc, use_container_width=True)
-
-    # ── Drawdown ───────────────────────────────────────────────
-    st.subheader("📉 Drawdown")
-
-    fig_dd, max_dd = compute_drawdown(df_filtered)
-
-    if max_dd > -10:
-        dd_label = "🟢 Faible"
-    elif max_dd > -20:
-        dd_label = "🟡 Modéré"
     else:
-        dd_label = "🔴 Sévère"
+        st.info("Objectif FIRE non défini — renseigne-le dans Saisie manuelle.")
 
-    col_dd1, col_dd2, _ = st.columns([1, 1, 5])
-    with col_dd1:
-        display_kpi("Pire drawdown", f"{max_dd:.1f} %")
-    col_dd2.metric("Niveau de risque", dd_label)
-
-    st.plotly_chart(fig_dd, use_container_width=True)
-
-    # ── Tableau des positions ──────────────────────────────────
-    st.divider()
-
-    df_positions_detail = compute_positions_with_pru(df_txn, df_assets)
-
-    if df_positions_detail.empty:
-        st.info("Aucune position ouverte.")
+    col_f1, col_f2, col_f3 = st.columns(3)
+    display_kpi_block(col_f1, "Revenu passif mensuel (4 %)",
+                      f"{fmt_eur(fire['passive_income_monthly'])}/mois")
+    display_kpi_block(col_f2, "Revenu passif annuel (4 %)",
+                      f"{fmt_eur(fire['passive_income_annual'])}/an")
+    if fire["freedom_days"] is not None:
+        display_kpi_block(
+            col_f3, "Jours de liberté financière",
+            f"{fire['freedom_days']:,.0f} jours".replace(",", " "),
+        )
     else:
-        total_pv           = df_positions_detail["pv_latente"].sum()
-        total_invested_pos = df_positions_detail["invested"].sum()
-        pv_pct_global      = (total_pv / total_invested_pos * 100) if total_invested_pos > 0 else 0.0
+        col_f3.info("Définis ton revenu mensuel pour ce calcul.")
 
-        # KPIs résumés toujours visibles
-        col1, col2, col3 = st.columns(3)
-        display_kpi_block(col1, "Lignes ouvertes",             str(len(df_positions_detail)))
-        display_kpi_block(col2, "Plus-value latente totale",   fmt_eur(total_pv),
-                          pv_pct_global, is_percent=True)
-        display_kpi_block(col3, "Capital investi (positions)", fmt_eur(total_invested_pos))
+    # ── 5. Portefeuille — tabs Positions / Allocation ──────────────
+    st.subheader("📋 Portefeuille")
 
-        # Tableau dans un expander pour alléger le scroll
-        with st.expander("📋 Voir les positions détaillées"):
-            df_display = df_positions_detail.copy()
-            df_display["PRU"]         = df_display["pru"].map(lambda x: f"{x:.2f} €")
-            df_display["Prix actuel"] = df_display["last_known_price"].map(lambda x: f"{x:.2f} €")
-            df_display["Valeur"]      = df_display["value"].map(fmt_eur)
-            df_display["Investi"]     = df_display["invested"].map(fmt_eur)
-            df_display["PV latente"]  = df_display["pv_latente"].map(
-                lambda x: f"{x:+,.0f} €".replace(",", " ")
-            )
-            df_display["PV %"]        = df_display["pv_pct"].map(lambda x: f"{x:+.2f} %")
+    tab_pos, tab_alloc = st.tabs(["📋 Positions", "📊 Allocation"])
 
-            df_display = df_display.rename(columns={
-                "name":        "Asset",
-                "asset_class": "Classe",
-                "quantity":    "Quantité",
-            })
-            df_display = df_display[[
-                "Asset", "Classe", "Quantité",
-                "PRU", "Prix actuel",
-                "Investi", "Valeur",
-                "PV latente", "PV %",
-            ]]
-            st.dataframe(df_display, use_container_width=True, hide_index=True)
+    with tab_pos:
+        df_positions_detail = compute_positions_with_pru(df_txn, df_assets)
 
-    st.divider()
+        if df_positions_detail.empty:
+            st.info("Aucune position ouverte.")
+        else:
+            total_pv           = df_positions_detail["pv_latente"].sum()
+            total_invested_pos = df_positions_detail["invested"].sum()
+            pv_pct_global      = (
+                total_pv / total_invested_pos * 100
+            ) if total_invested_pos > 0 else 0.0
+
+            col1, col2, col3 = st.columns(3)
+            display_kpi_block(col1, "Lignes ouvertes",             str(len(df_positions_detail)))
+            display_kpi_block(col2, "Plus-value latente totale",   fmt_eur(total_pv),
+                              pv_pct_global, is_percent=True)
+            display_kpi_block(col3, "Capital investi (positions)", fmt_eur(total_invested_pos))
+
+            with st.expander("Voir le tableau détaillé"):
+                df_display = df_positions_detail.copy()
+                df_display["PRU"]         = df_display["pru"].map(lambda x: f"{x:.2f} €")
+                df_display["Prix actuel"] = df_display["last_known_price"].map(
+                    lambda x: f"{x:.2f} €"
+                )
+                df_display["Valeur"]      = df_display["value"].map(fmt_eur)
+                df_display["Investi"]     = df_display["invested"].map(fmt_eur)
+                df_display["PV latente"]  = df_display["pv_latente"].map(
+                    lambda x: f"{x:+,.0f} €".replace(",", " ")
+                )
+                df_display["PV %"]        = df_display["pv_pct"].map(
+                    lambda x: f"{x:+.2f} %"
+                )
+                df_display = df_display.rename(columns={
+                    "name": "Asset", "asset_class": "Classe", "quantity": "Quantité",
+                })
+                df_display = df_display[[
+                    "Asset", "Classe", "Quantité",
+                    "PRU", "Prix actuel", "Investi", "Valeur", "PV latente", "PV %",
+                ]]
+                st.dataframe(df_display, use_container_width=True, hide_index=True)
+
+    with tab_alloc:
+        df_positions_global = compute_global_positions(df_txn, df_assets)
+        if not df_positions_global.empty:
+            col1, col2 = st.columns(2)
+            render_allocation_charts(df_positions_global, col1, col2)
+        else:
+            st.info("Aucune position détectée.")
+
+    # ── Footer ─────────────────────────────────────────────────────
     st.caption(
         f"Dernière donnée : {df_snap.iloc[-1]['date'].strftime('%d/%m/%Y')} "
         f"· {len(df_snap)} snapshots disponibles"
     )
-
 
 def page_analyses():
     st.title("📊 Analyses & Graphiques")
@@ -1810,10 +1744,9 @@ def page_analyses():
 
 
     col1, col2, col3 = st.columns(3)
-    display_kpi_block(col1, "Performance portefeuille",
-                      format_perf(perf_portef), perf_portef, is_percent=True)
+    display_kpi_block(col1, "Performance portefeuille",   format_perf(perf_portef))
     display_kpi_block(col2, f"Performance Livret A ({risk_free_rate*100:.1f} %)",
-                      format_perf(perf_livret), delta_color="off")
+                      format_perf(perf_livret))
     display_kpi_block(col3, "Écart (alpha vs Livret A)",
                       format_perf(ecart), ecart, is_percent=True)
 
@@ -1853,12 +1786,11 @@ def page_analyses():
             )
 
         col1, col2, col3 = st.columns(3)
-        display_kpi_block(col1, "Performance portefeuille",
-                          f"{perf_portef:+.2f} %", perf_portef, is_percent=True)
+        display_kpi_block(col1, "Performance portefeuille", f"{perf_portef:+.2f} %")
 
         if perf_bench is not None:
             display_kpi_block(col2, f"Performance {selected['name']}",
-                              f"{perf_bench:+.2f} %", delta_color="off")
+                              f"{perf_bench:+.2f} %")
             display_kpi_block(col3, "Alpha généré",
                               f"{ecart:+.2f} %", ecart, is_percent=True)
         else:
