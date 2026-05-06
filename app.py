@@ -1593,29 +1593,61 @@ def page_analyses():
 
     if not df_annual.empty:
 
-        def color_perf_row(val):
-            if isinstance(val, float):
+        def color_perf_num(val):
+            """Coloring appliqué sur valeurs numériques brutes (avant formatage)."""
+            if isinstance(val, (int, float)):
                 if val > 0:
                     return "color: #2ECC71"
                 elif val < 0:
                     return "color: #E84C4C"
             return ""
 
-        df_annual_display = df_annual.copy()
-        df_annual_display["Début"] = df_annual_display["Début"].map(fmt_eur)
-        df_annual_display["Fin"]   = df_annual_display["Fin"].map(fmt_eur)
-        df_annual_display["Perf €"] = df_annual_display["Perf €"].map(
-            lambda x: f"{x:+,.0f} €".replace(",", " ")
-        )
-        df_annual_display["Perf %"] = df_annual_display["Perf %"].map(
-            lambda x: f"{x:+.2f} %"
-        )
+        # ── Graphique en barres horizontal ─────────────────────
+        # Ordre chronologique (plus ancien en haut → plus récent en bas)
+        df_chart = df_annual.iloc[::-1].reset_index(drop=True)
+        bar_colors = ["#2ECC71" if v >= 0 else "#E84C4C" for v in df_chart["Perf %"]]
 
-        st.dataframe(
-            df_annual_display,
-            use_container_width=True,
-            hide_index=True,
+        fig_annual = go.Figure(go.Bar(
+            x=df_chart["Perf %"],
+            y=df_chart["Année"],
+            orientation="h",
+            marker_color=bar_colors,
+            text=[f"{v:+.2f} %" for v in df_chart["Perf %"]],
+            textposition="outside",
+            hovertemplate="%{y} : %{x:+.2f} %<extra></extra>",
+        ))
+        fig_annual.update_layout(
+            height=max(180, len(df_chart) * 48),
+            margin=dict(l=0, r=70, t=10, b=0),
+            xaxis=dict(
+                ticksuffix=" %",
+                showgrid=True,
+                gridcolor="#f0f0f0",
+                zeroline=True,
+                zerolinecolor="#cccccc",
+                zerolinewidth=1.5,
+            ),
+            yaxis=dict(showgrid=False),
+            plot_bgcolor="white",
+            paper_bgcolor="rgba(0,0,0,0)",
         )
+        st.plotly_chart(fig_annual, use_container_width=True)
+
+        # ── Tableau avec coloring sur valeurs numériques ────────
+        # On applique le style AVANT le formatage en string,
+        # puis on formate via Styler.format() pour garder la coloration.
+        styled = (
+            df_annual.style
+            .map(color_perf_num, subset=["Perf %", "Perf €"])
+            .format({
+                "Début":  fmt_eur,
+                "Fin":    fmt_eur,
+                "Perf €": lambda x: f"{x:+,.0f} €".replace(",", " "),
+                "Perf %": lambda x: f"{x:+.2f} %",
+            })
+        )
+        st.dataframe(styled, use_container_width=True, hide_index=True)
+
     else:
         st.info("Pas encore assez de données pour calculer les performances annuelles.")
 
