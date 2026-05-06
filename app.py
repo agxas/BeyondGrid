@@ -151,26 +151,26 @@ def format_perf(pct: float) -> str:
     return f"{pct:+.2f} %"
 
 
-def display_kpi(label: str, value: str, delta: float | None = None, is_percent: bool = False):
-    """
-    KPI homogène avec :
-    - flèche directionnelle
-    - formatage automatique
-    """
-
+def display_kpi(
+    label: str,
+    value: str,
+    delta: float | None = None,
+    is_percent: bool = False,
+    delta_color: str = "normal",
+):
+    """KPI homogène avec flèche directionnelle et formatage automatique."""
     delta_display = None
-
     if delta is not None:
         if is_percent:
             delta_display = f"{delta:+.2f}%"
         else:
             delta_display = f"{delta:+,.0f} €".replace(",", " ")
 
-
     st.metric(
         label=label,
         value=value,
         delta=delta_display,
+        delta_color=delta_color,
     )
 
 def display_kpi_block(
@@ -179,20 +179,12 @@ def display_kpi_block(
     value: str,
     delta: float | None = None,
     is_percent: bool = False,
-    subline: str | None = None
+    subline: str | None = None,
+    delta_color: str = "normal",
 ):
-    """
-    Bloc KPI complet :
-    - KPI principal (via display_kpi)
-    - ligne secondaire compacte
-    """
+    """Bloc KPI complet : KPI principal + ligne secondaire compacte."""
     with col:
-        display_kpi(
-            label,
-            value,
-            delta,
-            is_percent=is_percent,
-        )
+        display_kpi(label, value, delta, is_percent=is_percent, delta_color=delta_color)
         if subline:
             st.caption(subline)
 
@@ -1601,13 +1593,10 @@ def page_vue_globale():
 
         # KPIs résumés toujours visibles
         col1, col2, col3 = st.columns(3)
-        col1.metric("Lignes ouvertes", len(df_positions_detail))
-        col2.metric(
-            "Plus-value latente totale",
-            fmt_eur(total_pv),
-            f"{pv_pct_global:+.2f} %",
-        )
-        col3.metric("Capital investi (positions)", fmt_eur(total_invested_pos))
+        display_kpi_block(col1, "Lignes ouvertes",             str(len(df_positions_detail)))
+        display_kpi_block(col2, "Plus-value latente totale",   fmt_eur(total_pv),
+                          pv_pct_global, is_percent=True)
+        display_kpi_block(col3, "Capital investi (positions)", fmt_eur(total_invested_pos))
 
         # Tableau dans un expander pour alléger le scroll
         with st.expander("📋 Voir les positions détaillées"):
@@ -1821,19 +1810,12 @@ def page_analyses():
 
 
     col1, col2, col3 = st.columns(3)
-    col1.metric("Performance portefeuille", format_perf(perf_portef))
-    col2.metric(
-        f"Performance Livret A ({risk_free_rate*100:.1f} %)",
-        format_perf(perf_livret),
-        delta_color="off",
-    )
-    with col3:
-        display_kpi(
-            "Écart (alpha vs Livret A)",
-            format_perf(ecart),
-            ecart,
-            is_percent=True,
-        )
+    display_kpi_block(col1, "Performance portefeuille",
+                      format_perf(perf_portef), perf_portef, is_percent=True)
+    display_kpi_block(col2, f"Performance Livret A ({risk_free_rate*100:.1f} %)",
+                      format_perf(perf_livret), delta_color="off")
+    display_kpi_block(col3, "Écart (alpha vs Livret A)",
+                      format_perf(ecart), ecart, is_percent=True)
 
     st.plotly_chart(fig_la, use_container_width=True)
 
@@ -1871,21 +1853,14 @@ def page_analyses():
             )
 
         col1, col2, col3 = st.columns(3)
-        col1.metric("Performance portefeuille", f"{perf_portef:+.2f} %")
+        display_kpi_block(col1, "Performance portefeuille",
+                          f"{perf_portef:+.2f} %", perf_portef, is_percent=True)
 
         if perf_bench is not None:
-            col2.metric(
-                f"Performance {selected['name']}",
-                f"{perf_bench:+.2f} %",
-                delta_color="off",
-            )
-            with col3:
-                display_kpi(
-                    "Alpha généré",
-                    f"{ecart:+.2f} %",
-                    ecart,
-                    is_percent=True,
-                )
+            display_kpi_block(col2, f"Performance {selected['name']}",
+                              f"{perf_bench:+.2f} %", delta_color="off")
+            display_kpi_block(col3, "Alpha généré",
+                              f"{ecart:+.2f} %", ecart, is_percent=True)
         else:
             col2.warning("Données benchmark indisponibles")
 
@@ -1944,26 +1919,11 @@ def page_analyses():
         gain_pct = (gain_total / capital_final * 100) if capital_final > 0 else 0
 
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric(
-            f"Valeur dans {years} ans",
-            fmt_eur(val_finale_nom),
-        )
-        col2.metric(
-            "Valeur réelle (pouvoir d'achat)",
-            fmt_eur(val_finale_reel),
-        )
-        col3.metric(
-            "Capital total investi",
-            fmt_eur(capital_final),
-        )
-        
-        with col4:
-            display_kpi(
-                "Gain généré par les intérêts",
-                fmt_eur(gain_total),
-                gain_pct,
-                is_percent=True,
-            )
+        display_kpi_block(col1, f"Valeur dans {years} ans",    fmt_eur(val_finale_nom))
+        display_kpi_block(col2, "Valeur réelle (pouvoir d'achat)", fmt_eur(val_finale_reel))
+        display_kpi_block(col3, "Capital total investi",       fmt_eur(capital_final))
+        display_kpi_block(col4, "Gain généré par les intérêts",
+                          fmt_eur(gain_total), gain_pct, is_percent=True)
 
         # Ligne FIRE sur le graphique si target définie
         if fire_target > 0:
