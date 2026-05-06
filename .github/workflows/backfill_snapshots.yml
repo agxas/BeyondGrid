@@ -1,0 +1,50 @@
+name: Backfill Snapshots
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Simuler sans écrire en base (dry-run)"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      start_date:
+        description: "Date de départ (YYYY-MM-DD) — laisser vide pour démarrer depuis la première transaction"
+        required: false
+        default: ""
+        type: string
+
+jobs:
+  backfill:
+    name: Backfill des snapshots historiques
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout du dépôt
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Installation des dépendances
+        run: pip install -r requirements.txt
+
+      - name: Exécution du backfill
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          ARGS=""
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          if [ -n "${{ inputs.start_date }}" ]; then
+            ARGS="$ARGS --from ${{ inputs.start_date }}"
+          fi
+          python scripts/backfill.py $ARGS
