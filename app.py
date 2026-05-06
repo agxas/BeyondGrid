@@ -366,49 +366,59 @@ def compute_kpis(df_snap: pd.DataFrame) -> dict:
 
 def compute_daily_change(df_snap: pd.DataFrame) -> tuple[float, float] | None:
     """
-    Calcule la variation journalière (€ et %) entre les deux derniers snapshots.
+    Variation journalière nette des apports (€ et %).
+    Si tu as acheté pour 500 € aujourd'hui, ça n'apparaît pas comme un gain.
     Retourne None si pas assez de données.
     """
     if df_snap is None or len(df_snap) < 2:
         return None
 
-    last = df_snap.iloc[-1]["total_value"]
-    prev = df_snap.iloc[-2]["total_value"]
+    last_val  = float(df_snap.iloc[-1]["total_value"])
+    prev_val  = float(df_snap.iloc[-2]["total_value"])
+    last_inv  = float(df_snap.iloc[-1]["invested_capital"])
+    prev_inv  = float(df_snap.iloc[-2]["invested_capital"])
 
-    if prev == 0:
+    if prev_val == 0:
         return None
 
-    delta_eur = float(last - prev)
-    delta_pct = (last / prev - 1) * 100
+    new_capital = last_inv - prev_inv
+    delta_eur   = last_val - prev_val - new_capital
+    delta_pct   = ((last_val - new_capital) / prev_val - 1) * 100
 
     return delta_eur, delta_pct
 
 def compute_annual_performance(df_snap: pd.DataFrame) -> pd.DataFrame:
     """
-    Performance par année calendaire + YTD.
+    Performance par année calendaire + YTD, nette des apports.
     Retourne : Année | Début | Fin | Perf % | Perf €
     Trié du plus récent au plus ancien.
     """
     if df_snap.empty or len(df_snap) < 2:
         return pd.DataFrame()
 
-    df = df_snap.copy()
-    df["year"] = df["date"].dt.year
+    # Indice de perf sur l'historique complet (chaîné — permet de comparer
+    # les sous-périodes annuelles sans biais de capital injecté)
+    full_index   = _build_perf_index(df_snap).reset_index(drop=True)
+    df           = df_snap.reset_index(drop=True).copy()
+    df["year"]   = df["date"].dt.year
+    df["pidx"]   = full_index.values
     current_year = pd.Timestamp.today().year
 
     rows = []
     for year, group in df.groupby("year"):
-        group = group.sort_values("date")
+        group     = group.sort_values("date")
+        idx_start = float(group.iloc[0]["pidx"])
+        idx_end   = float(group.iloc[-1]["pidx"])
         start_val = float(group.iloc[0]["total_value"])
         end_val   = float(group.iloc[-1]["total_value"])
-        perf_pct  = (end_val / start_val - 1) * 100 if start_val > 0 else 0.0
-        perf_eur  = end_val - start_val
+        perf_pct  = (idx_end / idx_start - 1) * 100 if idx_start > 0 else 0.0
+        perf_eur  = start_val * (idx_end / idx_start - 1) if idx_start > 0 else 0.0
         rows.append({
-            "Année":   "YTD" if year == current_year else str(year),
-            "Début":   start_val,
-            "Fin":     end_val,
-            "Perf %":  round(perf_pct, 2),
-            "Perf €":  round(perf_eur, 2),
+            "Année":  "YTD" if year == current_year else str(year),
+            "Début":  start_val,
+            "Fin":    end_val,
+            "Perf %": round(perf_pct, 2),
+            "Perf €": round(perf_eur, 2),
         })
 
     # Plus récent en premier
@@ -437,26 +447,61 @@ def _slice_period(df_snap: pd.DataFrame, months: int) -> pd.DataFrame:
     df_period = df_snap[df_snap["date"] >= start_date]
     return df_period if len(df_period) >= 2 else pd.DataFrame()
 
+
+def _build_perf_index(df_snap: pd.DataFrame) -> pd.Series:
+    """
+    Construit un indice de performance pure, net des apports en capital.
+
+    Pour chaque jour t :
+      r_t = (V_t - ΔI_t) / V_{t-1} - 1
+      où ΔI_t = invested_capital_t - invested_capital_{t-1}
+
+    L'indice est le produit cumulé des (1 + r_t), commence à 1.0.
+    Ainsi, si tu injectes 500 € un lundi, ça n'affecte pas la performance.
+    """
+    df = df_snap.reset_index(drop=True)
+    values   = df["total_value"].astype(float)
+    invested = df["invested_capital"].astype(float)
+
+    delta_invested = invested.diff().fillna(0)
+    prev_values    = values.shift(1)
+
+    # r_t = (V_t - ΔI_t) / V_{t-1} - 1
+    adj_returns = (values - delta_invested) / prev_values - 1
+    adj_returns.iloc[0] = 0.0                   # premier point = base
+    adj_returns = adj_returns.fillna(0).clip(lower=-1)
+
+    perf_index = (1 + adj_returns).cumprod()
+    perf_index.index = df["date"]
+    return perf_index
+
+
 def compute_perf_over_period(df_snap: pd.DataFrame, months: int) -> float:
+    """Performance pure sur la période (nette des apports)."""
     df_period = _slice_period(df_snap, months)
     if df_period.empty:
         return 0.0
-    start_value = float(df_period.iloc[0]["total_value"])
-    end_value   = float(df_period.iloc[-1]["total_value"])
-    return (end_value / start_value - 1) * 100 if start_value != 0 else 0.0
+    idx = _build_perf_index(df_period)
+    return (idx.iloc[-1] - 1) * 100
+
 
 def compute_perf_value_over_period(df_snap: pd.DataFrame, months: int) -> float:
+    """Gain marché en € sur la période (hors capital injecté)."""
     df_period = _slice_period(df_snap, months)
     if df_period.empty:
         return 0.0
-    return float(df_period.iloc[-1]["total_value"]) - float(df_period.iloc[0]["total_value"])
+    idx           = _build_perf_index(df_period)
+    start_value   = float(df_period.iloc[0]["total_value"])
+    return start_value * (idx.iloc[-1] - 1)
+
 
 def compute_sparkline(df_snap: pd.DataFrame, months: int) -> str:
+    """Sparkline basée sur l'indice de performance ajusté."""
     df_period = _slice_period(df_snap, months)
     if df_period.empty:
         return ""
-    values = df_period["total_value"].astype(float)
-    min_v, max_v = values.min(), values.max()
+    values        = _build_perf_index(df_period).values
+    min_v, max_v  = values.min(), values.max()
     if max_v == min_v:
         return "▁" * len(values)
     ticks = "▁▂▃▄▅▆▇█"
@@ -533,13 +578,14 @@ def compute_perf_chart(df_snap: pd.DataFrame) -> go.Figure:
 def compute_drawdown(df_snap: pd.DataFrame) -> tuple[go.Figure, float]:
     """
     Calcule et trace le drawdown depuis le plus haut historique.
+    Basé sur l'indice de perf ajusté (sans effet des apports).
     Retourne (figure, drawdown_max_en_pct).
     """
-    values   = df_snap["total_value"].astype(float)
-    dates    = df_snap["date"]
-    peak     = values.cummax()
-    drawdown = (values - peak) / peak * 100
-    max_dd   = drawdown.min()
+    perf_index = _build_perf_index(df_snap).reset_index(drop=True)
+    dates      = df_snap["date"].reset_index(drop=True)
+    peak       = perf_index.expanding().max()
+    drawdown   = (perf_index / peak - 1) * 100
+    max_dd     = drawdown.min()
 
     fig = go.Figure()
 
@@ -586,15 +632,15 @@ def compute_drawdown(df_snap: pd.DataFrame) -> tuple[go.Figure, float]:
     return fig, max_dd
 
 
-# FIX SHARPE/VOLATILITÉ : retourne None si pas assez de données
 def compute_volatility(df_snap: pd.DataFrame) -> float | None:
     """
-    Volatilité annualisée des rendements journaliers (en %).
+    Volatilité annualisée des rendements journaliers ajustés (en %).
+    Utilise l'indice de perf pour éliminer l'effet des apports.
     Retourne None si pas assez de données (< 3 snapshots).
     """
     if len(df_snap) < 3:
         return None
-    returns = df_snap["total_value"].astype(float).pct_change().dropna()
+    returns = _build_perf_index(df_snap).pct_change().dropna()
     if len(returns) < 2 or returns.std() == 0:
         return None
     return float(returns.std() * (252 ** 0.5) * 100)
@@ -602,12 +648,13 @@ def compute_volatility(df_snap: pd.DataFrame) -> float | None:
 
 def compute_sharpe(df_snap: pd.DataFrame, risk_free_rate: float) -> float | None:
     """
-    Ratio de Sharpe annualisé.
+    Ratio de Sharpe annualisé sur rendements ajustés.
+    Utilise l'indice de perf pour éliminer l'effet des apports.
     Retourne None si pas assez de données (< 3 snapshots).
     """
     if len(df_snap) < 3:
         return None
-    returns = df_snap["total_value"].astype(float).pct_change().dropna()
+    returns = _build_perf_index(df_snap).pct_change().dropna()
     if len(returns) < 2 or returns.std() == 0:
         return None
     daily_rf          = risk_free_rate / 252
@@ -621,27 +668,31 @@ def compute_livret_a_comparison(
     livret_a_rate: float,
 ) -> tuple[go.Figure, float, float, float]:
     """
-    Compare la valeur totale du portefeuille à un placement Livret A
-    équivalent, partant du même capital initial.
+    Compare la performance ajustée du portefeuille à un placement Livret A.
+    La courbe portefeuille utilise l'indice de perf (sans effet des apports)
+    rebased sur la valeur initiale, pour une comparaison équitable.
     """
     df          = df_snap.copy().reset_index(drop=True)
     dates       = df["date"]
-    values      = df["total_value"].astype(float)
-    start_value = values.iloc[0]
+    start_value = float(df["total_value"].iloc[0])
+
+    # Courbe portefeuille ajustée : start_value × indice de perf
+    perf_index      = _build_perf_index(df_snap).reset_index(drop=True)
+    portef_adjusted = start_value * perf_index
 
     daily_rate = (1 + livret_a_rate) ** (1 / 365) - 1
     n_days     = (dates - dates.iloc[0]).dt.days
     livret_a   = start_value * (1 + daily_rate) ** n_days
 
-    perf_portef = (values.iloc[-1] / start_value - 1) * 100
+    perf_portef = (perf_index.iloc[-1] - 1) * 100
     perf_livret = (livret_a.iloc[-1] / start_value - 1) * 100
     ecart       = perf_portef - perf_livret
 
     fig = go.Figure()
 
     fig.add_trace(go.Scatter(
-        x=dates, y=values,
-        name="Mon portefeuille",
+        x=dates, y=portef_adjusted,
+        name="Mon portefeuille (perf ajustée)",
         line=dict(color="#4C9BE8", width=2.5),
         hovertemplate="%{y:,.0f} €<extra>Portefeuille</extra>",
     ))
@@ -678,21 +729,22 @@ def compute_livret_a_comparison(
     return fig, perf_portef, perf_livret, ecart
 
 
-# FIX BENCHMARK : correction du reindex timezone-aware vs naive
 def compute_benchmark_comparison(
     df_snap: pd.DataFrame,
     benchmark_ticker: str,
     benchmark_name: str,
 ) -> tuple[go.Figure, float, float | None, float | None]:
     """
-    Compare la performance relative du portefeuille vs un benchmark.
-    Les deux courbes sont rebasées à 100% au point de départ.
+    Compare la performance ajustée du portefeuille vs un benchmark.
+    Les deux courbes sont rebasées à 100 au point de départ.
+    Le portefeuille utilise l'indice de perf (sans effet des apports).
     """
     df     = df_snap.copy().reset_index(drop=True)
     dates  = df["date"]
-    values = df["total_value"].astype(float)
 
-    portef_rebased = (values / values.iloc[0]) * 100
+    # Indice ajusté rebased à 100
+    perf_index     = _build_perf_index(df_snap).reset_index(drop=True)
+    portef_rebased = perf_index * 100
     perf_portef    = float(portef_rebased.iloc[-1] - 100)
 
     start_str = dates.iloc[0].strftime("%Y-%m-%d")
