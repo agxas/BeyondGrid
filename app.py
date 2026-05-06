@@ -1735,7 +1735,24 @@ def page_analyses():
         *Le taux sans risque utilisé est le Livret A, paramétrable dans Saisie manuelle.*
         """)
 
-    # ── 4b : Performance vs Livret A ──────────────────────────
+    # ── Drawdown ────────────────────────────────────────────────
+    st.subheader("📉 Drawdown")
+
+    fig_dd, max_dd = compute_drawdown(df_filtered)
+
+    if max_dd > -10:
+        dd_label = "🟢 Faible"
+    elif max_dd > -20:
+        dd_label = "🟡 Modéré"
+    else:
+        dd_label = "🔴 Sévère"
+
+    col_dd1, col_dd2, _ = st.columns([1, 1, 5])
+    display_kpi_block(col_dd1, "Pire drawdown", f"{max_dd:.1f} %")
+    col_dd2.metric("Niveau de risque", dd_label)
+    st.plotly_chart(fig_dd, use_container_width=True)
+
+    st.divider()
     st.subheader("🏦 Portefeuille vs Livret A")
 
     fig_la, perf_portef, perf_livret, ecart = compute_livret_a_comparison(
