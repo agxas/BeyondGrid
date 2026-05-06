@@ -708,7 +708,7 @@ def compute_livret_a_comparison(
     ecart_signe = "+" if ecart >= 0 else ""
     fig.add_annotation(
         x=dates.iloc[-1],
-        y=values.iloc[-1],
+        y=portef_adjusted.iloc[-1],
         text=f"  {ecart_signe}{ecart:.2f} % vs Livret A",
         showarrow=False,
         xanchor="left",
