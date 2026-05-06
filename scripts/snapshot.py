@@ -123,7 +123,7 @@ def compute_snapshot(
         elif t["type"] == "sell":
             positions[t["asset_id"]] -= float(t["quantity"])
 
-    # Valorisation au prix actuel (pas de cash idle à additionner)
+    # Valorisation au prix actuel
     total_value = round(
         sum(
             qty * price_map.get(aid, 0.0)
@@ -138,7 +138,6 @@ def compute_snapshot(
         "account_id": account_id,
         "total_value": total_value,
         "invested_capital": round(invested_capital, 2),
-        "cash": 0.0,  # conservé pour compatibilité schéma, toujours 0
     }
 
 
