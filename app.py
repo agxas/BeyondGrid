@@ -1340,6 +1340,87 @@ def compute_accounts_evolution(df_snap_acc: pd.DataFrame) -> pd.DataFrame:
 # 4. PAGES
 # ============================================================
 
+def compute_dividends(
+    df_txn: pd.DataFrame,
+    df_assets: pd.DataFrame,
+) -> dict:
+    """
+    Agrège les transactions de type dividend.
+    Retourne un dict avec KPIs et figures Plotly.
+    Si aucun dividende, retourne {"empty": True}.
+    """
+    div = df_txn[df_txn["type"] == "dividend"].copy()
+
+    if div.empty:
+        return {"empty": True}
+
+    asset_map        = df_assets.set_index("id")["name"].to_dict()
+    div["asset_name"] = div["asset_id"].map(asset_map).fillna("Non précisé")
+    div["year"]       = div["date"].dt.year
+
+    total        = float(div["total_amount"].sum())
+    current_year = pd.Timestamp.today().year
+    ytd          = float(div[div["year"] == current_year]["total_amount"].sum())
+    nb           = len(div)
+
+    # ── Par asset (barres horizontales) ─────────────────────
+    by_asset = (
+        div.groupby("asset_name")["total_amount"]
+        .sum()
+        .sort_values(ascending=True)
+        .reset_index()
+    )
+    fig_asset = go.Figure(go.Bar(
+        x=by_asset["total_amount"],
+        y=by_asset["asset_name"],
+        orientation="h",
+        marker_color="#2ECC71",
+        text=[fmt_eur(v) for v in by_asset["total_amount"]],
+        textposition="outside",
+        hovertemplate="%{y} : %{x:,.2f} €<extra></extra>",
+    ))
+    fig_asset.update_layout(
+        height=max(180, len(by_asset) * 52),
+        margin=dict(l=0, r=90, t=10, b=0),
+        xaxis=dict(ticksuffix=" €", showgrid=True, gridcolor="#f0f0f0"),
+        yaxis=dict(showgrid=False),
+        plot_bgcolor="white",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+
+    # ── Par année (barres verticales) ───────────────────────
+    by_year = (
+        div.groupby("year")["total_amount"]
+        .sum()
+        .reset_index()
+    )
+    fig_year = go.Figure(go.Bar(
+        x=by_year["year"].astype(str),
+        y=by_year["total_amount"],
+        marker_color="#4C9BE8",
+        text=[fmt_eur(v) for v in by_year["total_amount"]],
+        textposition="outside",
+        hovertemplate="%{x} : %{y:,.2f} €<extra></extra>",
+    ))
+    fig_year.update_layout(
+        height=280,
+        margin=dict(l=0, r=0, t=30, b=0),
+        xaxis=dict(showgrid=False),
+        yaxis=dict(ticksuffix=" €", tickformat=",.0f", gridcolor="#f0f0f0"),
+        plot_bgcolor="white",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+
+    return {
+        "empty":     False,
+        "total":     total,
+        "ytd":       ytd,
+        "nb":        nb,
+        "fig_asset": fig_asset,
+        "fig_year":  fig_year,
+    }
+
+
 def page_vue_globale():
     st.title("📊 Synthèse du Patrimoine")
 
@@ -1504,6 +1585,13 @@ def page_vue_globale():
     else:
         col_f3.info("Définis ton revenu mensuel pour ce calcul.")
 
+    # ── Dividendes (résumé compact) ───────────────────────────────
+    div_data = compute_dividends(df_txn, df_assets)
+    if not div_data.get("empty"):
+        col_d1, col_d2, _ = st.columns([1, 1, 2])
+        display_kpi_block(col_d1, "Dividendes reçus (total)", fmt_eur(div_data["total"]))
+        display_kpi_block(col_d2, "Dividendes YTD",           fmt_eur(div_data["ytd"]))
+
     # ── 5. Portefeuille — tabs Positions / Allocation ──────────────
     st.subheader("📋 Portefeuille")
 
@@ -1568,8 +1656,10 @@ def page_analyses():
     st.title("📊 Analyses & Graphiques")
 
     with st.spinner("Chargement des données..."):
-        df_snap  = fetch_snapshots_agg()
-        settings = fetch_settings()
+        df_snap   = fetch_snapshots_agg()
+        settings  = fetch_settings()
+        df_txn    = fetch_transactions()
+        df_assets = fetch_assets()
 
     if df_snap.empty:
         st.warning("Aucun snapshot disponible.")
@@ -1772,7 +1862,6 @@ def page_analyses():
     # ── 4c : Performance vs Benchmark ─────────────────────────
     st.subheader("🏁 Portefeuille vs Benchmark")
 
-    df_assets     = fetch_assets()
     df_benchmarks = df_assets[
         df_assets["is_benchmark"] == True
     ][["name", "yahoo_ticker"]].dropna(subset=["yahoo_ticker"])
@@ -1898,7 +1987,33 @@ def page_analyses():
             f"(soit **{fmt_eur(revenu_passif_reel)}/mois** en euros d'aujourd'hui)"
         )
 
-    # FIX : un seul pied de page (suppression du doublon)
+    # ── 💰 Dividendes ─────────────────────────────────────────────
+    st.divider()
+    st.subheader("💰 Dividendes")
+
+    div_data = compute_dividends(df_txn, df_assets)
+
+    if div_data.get("empty"):
+        st.info("Aucun dividende enregistré. Saisis tes dividendes dans Saisie manuelle (type : Dividende).")
+    else:
+        # ── KPIs ────────────────────────────────────────────────
+        col1, col2, col3 = st.columns(3)
+        display_kpi_block(col1, "Total reçu (all time)", fmt_eur(div_data["total"]))
+        display_kpi_block(col2, "Reçu cette année (YTD)", fmt_eur(div_data["ytd"]))
+        display_kpi_block(col3, "Nombre de versements",  str(div_data["nb"]))
+
+        # ── Graphiques ──────────────────────────────────────────
+        col_left, col_right = st.columns(2)
+
+        with col_left:
+            st.caption("Par source")
+            st.plotly_chart(div_data["fig_asset"], use_container_width=True)
+
+        with col_right:
+            st.caption("Par année")
+            st.plotly_chart(div_data["fig_year"], use_container_width=True)
+
+    # ── Pied de page ───────────────────────────────────────────────
     st.divider()
     st.caption(
         f"Analyse sur {len(df_filtered)} jours · "
