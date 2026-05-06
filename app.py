@@ -11,6 +11,7 @@
 
 import math
 import os
+import json
 
 import streamlit as st
 import pandas as pd
@@ -31,8 +32,12 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "3.3"
+APP_VERSION = "3.4"
 PATCH_NOTES = {
+    "3.4": [
+        "Correction : persistance cibles rééquilibrage via DB (settings.pea_targets) — session_state retiré",
+        "Ajout : bouton Enregistrer les cibles avec sauvegarde en base Supabase",
+    ],
     "3.3": [
         "Ajout : page Vue par compte (KPIs, évolution, positions, allocation, dividendes par enveloppe)",
         "Ajout : total return (PV latente + dividendes) en subline sur Vue Globale et Vue par compte",
@@ -2254,19 +2259,23 @@ def page_reequilibrage():
     st.subheader("🎯 Allocations cibles")
     st.caption("Renseigne le pourcentage cible pour chaque ligne. Le total doit faire 100 %.")
 
+    # Charger les cibles sauvegardées en base (persistance fiable)
+    saved_raw = settings.get("pea_targets") or "{}"
+    try:
+        saved_targets = json.loads(saved_raw)
+    except (json.JSONDecodeError, TypeError):
+        saved_targets = {}
+
     targets     = {}
     total_cible = 0.0
 
-    # Formulaire par asset — valeurs persistées via session_state
-    # (les cibles survivent aux reruns Streamlit jusqu'à fermeture de session)
+    # Formulaire par asset
     for _, row in df_positions.iterrows():
         aid          = str(int(row["asset_id"]))
         poids_actuel = row["value"] / total_pea * 100
-        key          = f"target_{aid}"
 
-        # Initialiser session_state uniquement au premier affichage
-        if key not in st.session_state:
-            st.session_state[key] = float(round(poids_actuel))
+        # Cible : valeur sauvegardée en DB si disponible, sinon poids actuel arrondi
+        default_cible = float(saved_targets.get(aid, round(poids_actuel)))
 
         col_name, col_actuel, col_cible = st.columns([3, 1, 1])
         col_name.markdown(f"**{row['name']}**")
@@ -2276,18 +2285,35 @@ def page_reequilibrage():
             "Cible %",
             min_value=0.0,
             max_value=100.0,
+            value=default_cible,
             step=1.0,
-            key=key,
+            key=f"target_{aid}",
             label_visibility="collapsed",
         )
         targets[aid] = cible
         total_cible += cible
 
-    # Indicateur du total
-    if abs(total_cible - 100) < 0.1:
-        st.success(f"✅ Total : {total_cible:.1f} % — prêt à calculer")
-    else:
-        st.error(f"❌ Total : {total_cible:.1f} % — doit être égal à 100 %")
+    # Indicateur du total + bouton de sauvegarde
+    col_total, col_save = st.columns([3, 2])
+    with col_total:
+        if abs(total_cible - 100) < 0.1:
+            st.success(f"✅ Total : {total_cible:.1f} % — prêt à calculer")
+        else:
+            st.error(f"❌ Total : {total_cible:.1f} % — doit être égal à 100 %")
+
+    with col_save:
+        if st.button("💾 Enregistrer les cibles", use_container_width=True,
+                     help="Sauvegarde en base — persistant entre les sessions"):
+            try:
+                supabase.table("settings").upsert({
+                    "id":           1,
+                    "pea_targets":  json.dumps(targets),
+                    "updated_at":   pd.Timestamp.now(tz="UTC").isoformat(),
+                }).execute()
+                fetch_settings.clear()
+                st.success("✅ Allocations cibles enregistrées.")
+            except Exception as e:
+                st.error(f"❌ Erreur lors de la sauvegarde : {e}")
 
     st.divider()
 
