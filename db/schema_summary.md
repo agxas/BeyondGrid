@@ -22,7 +22,6 @@ All financial operations
 Daily aggregated portfolio values
 - Total value
 - Invested capital
-- Cash
 - Generated automatically (GitHub Actions)
 
 ### settings
