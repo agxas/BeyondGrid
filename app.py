@@ -1648,8 +1648,7 @@ def page_vue_globale():
         display_kpi_block(col_d1, "Dividendes reçus (total)", fmt_eur(div_data["total"]))
         display_kpi_block(col_d2, "Dividendes YTD",           fmt_eur(div_data["ytd"]))
         display_kpi_block(col_d3, "Rendement dividendes (TTM)",
-                          f"{yield_global:.2f} %",
-                          help_text=None)
+                          f"{yield_global:.2f} %")
 
     # ── 5. Portefeuille — tabs Positions / Allocation ──────────────
     st.subheader("📋 Portefeuille")
