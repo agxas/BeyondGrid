@@ -31,8 +31,13 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "3.1"
+APP_VERSION = "3.2"
 PATCH_NOTES = {
+    "3.2": [
+        "Ajout : visualisation des dividendes (Vue Globale + Analyses)",
+        "Ajout : compute_dividends() — KPIs total/YTD/nb versements + graphiques par source et par année",
+        "Nettoyage : df_txn et df_assets remontés dans le spinner de page_analyses",
+    ],
     "3.1": [
         "Refonte Vue Globale : structure en 5 sections + tabs Évolution et Portefeuille",
         "Suppression du drawdown de Vue Globale (déjà présent dans Analyses)",
