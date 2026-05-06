@@ -64,12 +64,10 @@ def update_prices(sb: Client) -> dict[int, float]:
                 price_map[aid] = price
                 log.info(f"  ✓ {name:<52} {price:.4f}")
             else:
-                # Fallback sur le dernier prix connu
                 fallback = float(asset["last_known_price"] or 0)
                 price_map[aid] = fallback
                 log.warning(f"  ⚠ {name:<52} fallback {fallback:.4f}")
         else:
-            # Prix manuel — on lit sans toucher
             manual = float(asset["last_known_price"] or 0)
             price_map[aid] = manual
             log.info(f"  · {name:<52} {manual:.4f}  (manuel)")
@@ -84,15 +82,21 @@ def compute_snapshot(
     today: str,
 ) -> dict | None:
     """
-    Calcule total_value, invested_capital et cash pour un compte.
+    Calcule total_value et invested_capital pour un compte.
 
     Conventions (voir schema.sql) :
       total_amount > 0  →  entrée d'argent dans l'enveloppe
       total_amount < 0  →  sortie d'argent de l'enveloppe
 
-    cash             = Σ total_amount  (tous types confondus)
-    invested_capital = Σ total_amount  (deposit + withdrawal uniquement)
-    total_value      = cash + Σ (quantité_nette × prix_actuel)
+    invested_capital = -Σ total_amount (buy + sell)
+                     = Σ coûts d'achat - Σ produits de vente
+                     → capital réellement sorti de poche (frais inclus)
+
+    total_value      = Σ (quantité_nette × prix_actuel)
+                     → pas de cash idle : achat supposé immédiat après versement
+
+    Note : deposit et withdrawal sont ignorés — le capital investi
+    est mesuré directement depuis les ordres buy/sell.
     """
     acc_txns = [t for t in transactions if t["account_id"] == account_id]
 
@@ -100,20 +104,13 @@ def compute_snapshot(
         log.warning(f"  Aucune transaction pour le compte {account_id}, ignoré.")
         return None
 
-    # Liquidités disponibles
-    cash_raw = sum(float(t["total_amount"]) for t in acc_txns)
-    if cash_raw < 0:
-        log.warning(
-            f"  Compte {account_id} : cash calculé négatif ({cash_raw:.2f} €) — "
-            "probable incohérence dans les transactions historiques. Corrigé à 0."
-        )
-    cash = max(0.0, cash_raw)
-
-    # Capital net investi (hors rendement)
-    invested_capital = sum(
+    # Capital net investi = coûts d'achat - produits de vente
+    # buy.total_amount est négatif → -(négatif) = positif ✓
+    # sell.total_amount est positif → -(positif) = négatif ✓
+    invested_capital = -sum(
         float(t["total_amount"])
         for t in acc_txns
-        if t["type"] in ("deposit", "withdrawal")
+        if t["type"] in ("buy", "sell")
     )
 
     # Quantité nette par asset (achats - ventes)
@@ -126,21 +123,22 @@ def compute_snapshot(
         elif t["type"] == "sell":
             positions[t["asset_id"]] -= float(t["quantity"])
 
-    # Valorisation
-    market_value = sum(
-        qty * price_map.get(aid, 0.0)
-        for aid, qty in positions.items()
-        if qty > 1e-9
+    # Valorisation au prix actuel (pas de cash idle à additionner)
+    total_value = round(
+        sum(
+            qty * price_map.get(aid, 0.0)
+            for aid, qty in positions.items()
+            if qty > 1e-9
+        ),
+        2,
     )
-
-    total_value = round(cash + market_value, 2)
 
     return {
         "date": today,
         "account_id": account_id,
         "total_value": total_value,
         "invested_capital": round(invested_capital, 2),
-        "cash": round(cash, 2),
+        "cash": 0.0,  # conservé pour compatibilité schéma, toujours 0
     }
 
 
@@ -190,8 +188,7 @@ def main() -> None:
             log.info(
                 f"  [{acc_name}]  "
                 f"total={snapshot['total_value']:>10.2f} €  |  "
-                f"investi={snapshot['invested_capital']:>10.2f} €  |  "
-                f"cash={snapshot['cash']:>8.2f} €"
+                f"investi={snapshot['invested_capital']:>10.2f} €"
             )
         except Exception as e:
             log.error(f"  [{acc_name}]  Erreur upsert: {e}")
