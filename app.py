@@ -196,11 +196,11 @@ def fetch_snapshots_agg() -> pd.DataFrame:
     """
     Snapshots agrégés par date (somme de tous les comptes).
     Retourne un DataFrame avec colonnes :
-      date | total_value | invested_capital | cash
+      date | total_value | invested_capital
     Trié par date ASC.
     """
     res = supabase.table("snapshots").select(
-        "date, total_value, invested_capital, cash"
+        "date, total_value, invested_capital"
     ).execute()
 
     if not res.data:
@@ -210,7 +210,7 @@ def fetch_snapshots_agg() -> pd.DataFrame:
     df["date"] = pd.to_datetime(df["date"])
 
     df = (
-        df.groupby("date")[["total_value", "invested_capital", "cash"]]
+        df.groupby("date")[["total_value", "invested_capital"]]
         .sum()
         .reset_index()
         .sort_values("date")
@@ -224,7 +224,7 @@ def fetch_snapshots_by_account() -> pd.DataFrame:
     Snapshots bruts avec nom du compte (pour vue par compte).
     """
     res = supabase.table("snapshots").select(
-        "date, total_value, invested_capital, cash, account_id, accounts(name, type)"
+        "date, total_value, invested_capital, account_id, accounts(name, type)"
     ).execute()
 
     if not res.data:
@@ -347,7 +347,6 @@ def compute_kpis(df_snap: pd.DataFrame) -> dict:
     latest = df_snap.iloc[-1]
     total_value      = float(latest["total_value"])
     invested_capital = float(latest["invested_capital"])
-    cash             = float(latest["cash"])
     plus_value       = total_value - invested_capital
     perf_pct         = (plus_value / invested_capital * 100) if invested_capital > 0 else 0.0
 
@@ -360,7 +359,6 @@ def compute_kpis(df_snap: pd.DataFrame) -> dict:
     return {
         "total_value":      total_value,
         "invested_capital": invested_capital,
-        "cash":             cash,
         "plus_value":       plus_value,
         "perf_pct":         perf_pct,
         "perf_since_start": perf_since_start,
@@ -1274,8 +1272,10 @@ def page_vue_globale():
     st.title("📊 Synthèse du Patrimoine")
 
     with st.spinner("Chargement des données..."):
-        df_snap  = fetch_snapshots_agg()
-        settings = fetch_settings()
+        df_snap   = fetch_snapshots_agg()
+        settings  = fetch_settings()
+        df_txn    = fetch_transactions()
+        df_assets = fetch_assets()
 
     if df_snap.empty:
         st.warning("Aucun snapshot disponible. Lance le script de snapshot pour commencer.")
@@ -1403,20 +1403,12 @@ def page_vue_globale():
     # ── Allocation globale ─────────────────────────────
     st.divider()
     st.subheader("📊 Allocation globale")
-    
-    with st.spinner("Calcul de l'allocation..."):
-        df_txn = fetch_transactions()
-        df_assets = fetch_assets()
-        df_positions_global = compute_global_positions(df_txn, df_assets)
-    
+
+    df_positions_global = compute_global_positions(df_txn, df_assets)
+
     if not df_positions_global.empty:
-    
-        by_class, by_geo = compute_allocation(df_positions_global)
-    
         col1, col2 = st.columns(2)
-    
         render_allocation_charts(df_positions_global, col1, col2)
-    
     else:
         st.info("Aucune position détectée.")
 
@@ -1503,9 +1495,7 @@ def page_vue_globale():
     st.divider()
     st.subheader("📋 Positions détaillées")
 
-    df_txn_full = fetch_transactions()
-    df_assets   = fetch_assets()
-    df_positions_detail = compute_positions_with_pru(df_txn_full, df_assets)
+    df_positions_detail = compute_positions_with_pru(df_txn, df_assets)
 
     if df_positions_detail.empty:
         st.info("Aucune position ouverte.")
