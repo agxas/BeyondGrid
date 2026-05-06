@@ -31,8 +31,13 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "3.2"
+APP_VERSION = "3.3"
 PATCH_NOTES = {
+    "3.3": [
+        "Ajout : page Vue par compte (KPIs, évolution, positions, allocation, dividendes par enveloppe)",
+        "Ajout : total return (PV latente + dividendes) en subline sur Vue Globale et Vue par compte",
+        "Amélioration : cibles rééquilibrage persistées via session_state (survivent aux reruns)",
+    ],
     "3.2": [
         "Ajout : visualisation des dividendes (Vue Globale + Analyses)",
         "Ajout : compute_dividends() — KPIs total/YTD/nb versements + graphiques par source et par année",
@@ -1444,6 +1449,15 @@ def page_vue_globale():
     daily_change = compute_daily_change(df_snap)
     fire         = compute_fire(kpis, settings)
 
+    # Total return = PV latente + dividendes reçus (calculé tôt pour l'affichage)
+    div_data         = compute_dividends(df_txn, df_assets)
+    total_dividends  = div_data["total"] if not div_data.get("empty") else 0.0
+    total_return     = kpis["plus_value"] + total_dividends
+    total_return_pct = (
+        total_return / kpis["invested_capital"] * 100
+        if kpis["invested_capital"] > 0 else 0.0
+    )
+
     nb_days, is_stale = check_data_freshness(df_snap)
     if is_stale:
         st.warning(
@@ -1461,8 +1475,14 @@ def page_vue_globale():
             signe = "▲" if delta_eur >= 0 else "▼"
             st.caption(f"{signe} {fmt_eur(delta_eur)} aujourd'hui ({delta_pct:+.2f} %)")
     display_kpi_block(col2, "Capital investi", fmt_eur(kpis["invested_capital"]))
+
+    # Subline total return si des dividendes ont été reçus
+    pv_subline = (
+        f"Total return (÷ dividendes) : {fmt_eur(total_return)} · {total_return_pct:+.2f} %"
+        if total_dividends > 0 else None
+    )
     display_kpi_block(col3, "Plus-value latente", fmt_eur(kpis["plus_value"]),
-                      kpis["perf_pct"], is_percent=True)
+                      kpis["perf_pct"], is_percent=True, subline=pv_subline)
 
     # ── 2. Performance récente ─────────────────────────────────────
     st.subheader("📅 Performance récente")
@@ -1591,7 +1611,6 @@ def page_vue_globale():
         col_f3.info("Définis ton revenu mensuel pour ce calcul.")
 
     # ── Dividendes (résumé compact) ───────────────────────────────
-    div_data = compute_dividends(df_txn, df_assets)
     if not div_data.get("empty"):
         col_d1, col_d2, _ = st.columns([1, 1, 2])
         display_kpi_block(col_d1, "Dividendes reçus (total)", fmt_eur(div_data["total"]))
@@ -2027,6 +2046,163 @@ def page_analyses():
     )
 
 
+def page_compte():
+    st.title("🏦 Vue par compte")
+
+    with st.spinner("Chargement des données..."):
+        df_accounts = fetch_accounts()
+        df_txn      = fetch_transactions()
+        df_assets   = fetch_assets()
+        df_snap_acc = fetch_snapshots_by_account()
+
+    if df_accounts.empty:
+        st.warning("Aucun compte actif.")
+        return
+
+    # ── Sélecteur de compte ────────────────────────────────────────
+    account_id = st.selectbox(
+        "Compte",
+        options=df_accounts["id"].tolist(),
+        format_func=lambda x: df_accounts.set_index("id").loc[x, "name"],
+        label_visibility="collapsed",
+    )
+    acc_row  = df_accounts.set_index("id").loc[account_id]
+    acc_name = acc_row["name"]
+    acc_type = acc_row["type"].upper()
+
+    st.caption(f"Enveloppe : **{acc_type}**")
+
+    # ── Filtrer les données sur ce compte ─────────────────────────
+    df_txn_acc  = df_txn[df_txn["account_id"] == account_id]
+    df_snap_one = (
+        df_snap_acc[df_snap_acc["account_name"] == acc_name]
+        .sort_values("date")
+        .reset_index(drop=True)
+    )
+
+    if df_snap_one.empty:
+        st.info("Aucun snapshot pour ce compte — relance un snapshot pour commencer.")
+        return
+
+    # ── KPIs principaux ────────────────────────────────────────────
+    latest           = df_snap_one.iloc[-1]
+    total_value      = float(latest["total_value"])
+    invested_capital = float(latest["invested_capital"])
+    plus_value       = total_value - invested_capital
+    perf_pct         = (plus_value / invested_capital * 100) if invested_capital > 0 else 0.0
+
+    div_acc          = compute_dividends(df_txn_acc, df_assets)
+    total_div        = div_acc["total"] if not div_acc.get("empty") else 0.0
+    total_return     = plus_value + total_div
+    total_return_pct = (total_return / invested_capital * 100) if invested_capital > 0 else 0.0
+
+    col1, col2, col3 = st.columns(3)
+    display_kpi_block(col1, "Valeur totale",    fmt_eur(total_value))
+    display_kpi_block(col2, "Capital investi",  fmt_eur(invested_capital))
+
+    pv_subline = (
+        f"Total return (÷ dividendes) : {fmt_eur(total_return)} · {total_return_pct:+.2f} %"
+        if total_div > 0 else None
+    )
+    display_kpi_block(col3, "Plus-value latente", fmt_eur(plus_value),
+                      perf_pct, is_percent=True, subline=pv_subline)
+
+    # ── Évolution ──────────────────────────────────────────────────
+    st.subheader("📈 Évolution")
+
+    col_period, _ = st.columns([2, 5])
+    with col_period:
+        periode = st.selectbox(
+            "Période",
+            options=PERIODE_OPTIONS,
+            index=PERIODE_OPTIONS.index(PERIODE_DEFAULT),
+            label_visibility="collapsed",
+            key="compte_periode",
+        )
+
+    df_filtered = filter_by_period(df_snap_one, periode)
+
+    if len(df_filtered) >= 2:
+        # Perfs sur la période
+        idx         = _build_perf_index(df_filtered)
+        perf_period = (idx.iloc[-1] - 1) * 100
+
+        col_p1, col_p2, _ = st.columns([1, 1, 4])
+        display_kpi_block(col_p1, f"Perf ({periode})", fmt_pct(perf_period))
+        display_kpi_block(col_p2, "Nb snapshots", str(len(df_filtered)))
+
+    st.plotly_chart(compute_perf_chart(df_filtered), use_container_width=True)
+
+    # ── Tabs : Positions / Allocation / Dividendes ─────────────────
+    st.subheader("📋 Détails")
+    tab_pos, tab_alloc, tab_div = st.tabs(["📋 Positions", "📊 Allocation", "💰 Dividendes"])
+
+    with tab_pos:
+        df_pos = compute_positions_with_pru(df_txn_acc, df_assets)
+        if df_pos.empty:
+            st.info("Aucune position ouverte sur ce compte.")
+        else:
+            total_pv      = df_pos["pv_latente"].sum()
+            total_inv_pos = df_pos["invested"].sum()
+            pv_pct        = (total_pv / total_inv_pos * 100) if total_inv_pos > 0 else 0.0
+
+            c1, c2, c3 = st.columns(3)
+            display_kpi_block(c1, "Lignes ouvertes",           str(len(df_pos)))
+            display_kpi_block(c2, "Plus-value latente totale", fmt_eur(total_pv),
+                              pv_pct, is_percent=True)
+            display_kpi_block(c3, "Capital investi",           fmt_eur(total_inv_pos))
+
+            with st.expander("Voir le tableau détaillé"):
+                df_disp = df_pos.copy()
+                df_disp["PRU"]         = df_disp["pru"].map(lambda x: f"{x:.2f} €")
+                df_disp["Prix actuel"] = df_disp["last_known_price"].map(lambda x: f"{x:.2f} €")
+                df_disp["Valeur"]      = df_disp["value"].map(fmt_eur)
+                df_disp["Investi"]     = df_disp["invested"].map(fmt_eur)
+                df_disp["PV latente"]  = df_disp["pv_latente"].map(
+                    lambda x: f"{x:+,.0f} €".replace(",", " ")
+                )
+                df_disp["PV %"]        = df_disp["pv_pct"].map(lambda x: f"{x:+.2f} %")
+                df_disp = df_disp.rename(columns={
+                    "name": "Asset", "asset_class": "Classe", "quantity": "Quantité",
+                })
+                df_disp = df_disp[[
+                    "Asset", "Classe", "Quantité",
+                    "PRU", "Prix actuel", "Investi", "Valeur", "PV latente", "PV %",
+                ]]
+                st.dataframe(df_disp, use_container_width=True, hide_index=True)
+
+    with tab_alloc:
+        df_pos_alloc = compute_global_positions(df_txn_acc, df_assets)
+        if not df_pos_alloc.empty:
+            col_a, col_b = st.columns(2)
+            render_allocation_charts(df_pos_alloc, col_a, col_b)
+        else:
+            st.info("Aucune position détectée.")
+
+    with tab_div:
+        if div_acc.get("empty"):
+            st.info("Aucun dividende enregistré pour ce compte.")
+        else:
+            c1, c2, c3 = st.columns(3)
+            display_kpi_block(c1, "Total reçu",           fmt_eur(div_acc["total"]))
+            display_kpi_block(c2, "Reçu cette année",     fmt_eur(div_acc["ytd"]))
+            display_kpi_block(c3, "Nombre de versements", str(div_acc["nb"]))
+
+            col_l, col_r = st.columns(2)
+            with col_l:
+                st.caption("Par source")
+                st.plotly_chart(div_acc["fig_asset"], use_container_width=True)
+            with col_r:
+                st.caption("Par année")
+                st.plotly_chart(div_acc["fig_year"],  use_container_width=True)
+
+    # ── Footer ─────────────────────────────────────────────────────
+    st.caption(
+        f"Dernière donnée : {df_snap_one.iloc[-1]['date'].strftime('%d/%m/%Y')} "
+        f"· {len(df_snap_one)} snapshot(s)"
+    )
+
+
 def page_reequilibrage():
     st.title("⚖️ Rééquilibrage PEA")
 
@@ -2081,10 +2257,16 @@ def page_reequilibrage():
     targets     = {}
     total_cible = 0.0
 
-    # Formulaire par asset
+    # Formulaire par asset — valeurs persistées via session_state
+    # (les cibles survivent aux reruns Streamlit jusqu'à fermeture de session)
     for _, row in df_positions.iterrows():
         aid          = str(int(row["asset_id"]))
         poids_actuel = row["value"] / total_pea * 100
+        key          = f"target_{aid}"
+
+        # Initialiser session_state uniquement au premier affichage
+        if key not in st.session_state:
+            st.session_state[key] = float(round(poids_actuel))
 
         col_name, col_actuel, col_cible = st.columns([3, 1, 1])
         col_name.markdown(f"**{row['name']}**")
@@ -2094,9 +2276,8 @@ def page_reequilibrage():
             "Cible %",
             min_value=0.0,
             max_value=100.0,
-            value=float(round(poids_actuel)),
             step=1.0,
-            key=f"target_{aid}",
+            key=key,
             label_visibility="collapsed",
         )
         targets[aid] = cible
@@ -2636,6 +2817,7 @@ menu = st.sidebar.radio(
     "Navigation",
     options=[
         "Vue Globale",
+        "Vue par compte",
         "Analyses & Graphiques",
         "Rééquilibrage PEA",
         "Saisie manuelle",
@@ -2643,6 +2825,7 @@ menu = st.sidebar.radio(
     ],
     format_func=lambda x: {
         "Vue Globale":           "🏠 Vue Globale",
+        "Vue par compte":        "🏦 Vue par compte",
         "Analyses & Graphiques": "📊 Analyses",
         "Rééquilibrage PEA":     "⚖️ Rééquilibrage PEA",
         "Saisie manuelle":       "✍️ Saisie manuelle",
@@ -2652,6 +2835,8 @@ menu = st.sidebar.radio(
 
 if menu == "Vue Globale":
     page_vue_globale()
+elif menu == "Vue par compte":
+    page_compte()
 elif menu == "Analyses & Graphiques":
     page_analyses()
 elif menu == "Rééquilibrage PEA":
