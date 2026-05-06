@@ -64,6 +64,8 @@ CREATE TABLE public.settings (
 
   fire_target_amount NUMERIC,
 
+  pea_targets TEXT,   -- JSON {asset_id: target_pct} — allocations cibles rééquilibrage
+
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -78,6 +80,7 @@ CREATE TABLE public.snapshots (
 
   total_value NUMERIC NOT NULL,
   invested_capital NUMERIC NOT NULL,
+  cash NUMERIC NOT NULL DEFAULT 0,
 
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
