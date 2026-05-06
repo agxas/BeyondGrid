@@ -31,8 +31,35 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "2.2"
+APP_VERSION = "3.0"
 PATCH_NOTES = {
+    "3.0": [
+        "Refonte du moteur de performance : toutes les métriques sont désormais nettes des apports en capital",
+        "Ajout de _build_perf_index() : indice TWR-like (rendement ajusté jour par jour de ΔI_t)",
+        "Correction : perf 1M/3M/1A, variation du jour, volatilité, Sharpe, drawdown — plus jamais gonflés par un DCA",
+        "Correction : graphiques Livret A et Benchmark utilisent la courbe de performance ajustée",
+        "Correction : performance annuelle et YTD recalculées sur l'indice chaîné",
+        "Correction : sparklines basées sur l'indice de perf (plus sur la valeur brute)",
+    ],
+    "2.5": [
+        "Modèle : suppression des transactions deposit et withdrawal",
+        "Modèle : invested_capital désormais calculé depuis les buy/sell uniquement (−Σ total_amount)",
+        "Modèle : total_value = valorisation marché uniquement (plus de cash idle)",
+        "snapshot.py : compute_snapshot simplifié, cohérent avec le nouveau modèle",
+        "app.py : formulaire saisie restreint à buy, sell, dividend, fee",
+        "app.py : résumé des flux transactions mis à jour (achats/ventes/dividendes/frais)",
+    ],
+    "2.4": [
+        "Nettoyage : colonne cash supprimée de la table snapshots et de tous les fichiers",
+        "Nettoyage : fetch_transactions() et fetch_assets() remontés au spinner initial de Vue Globale",
+        "Nettoyage : suppression du double fetch redondant dans page_vue_globale",
+        "Nettoyage : suppression de la variable orpheline by_class/by_geo dans page_vue_globale",
+    ],
+    "2.3": [
+        "Ajout : graphique en barres horizontal pour la performance annuelle (vert/rouge)",
+        "Correction : coloring du tableau annuel désormais appliqué sur les valeurs numériques",
+        "Correction : color_perf_row appliquée via Styler.format() au lieu de post-formatage string",
+    ],
     "2.2": [
         "Nettoyage : suppression du dict orphelin dans compute_global_positions",
         "Ajout : tableau de performance par année calendaire (YTD + historique)",
@@ -1483,46 +1510,63 @@ def page_vue_globale():
     fig = compute_perf_chart(df_filtered)
     st.plotly_chart(fig, use_container_width=True)
 
-   # ── Vue par compte ─────────────────────────────
+    # ── Vue par compte ─────────────────────────────────────────
     st.subheader("🏦 Évolution par compte")
-    
-    df_snap_acc = fetch_snapshots_by_account()
+
+    df_snap_acc          = fetch_snapshots_by_account()
     df_snap_acc_filtered = filter_by_period(df_snap_acc, periode)
-    df_acc_evo = compute_accounts_evolution(df_snap_acc_filtered)
-    
+    df_acc_evo           = compute_accounts_evolution(df_snap_acc_filtered)
+
     if not df_acc_evo.empty:
-        
-        # ✅ boucle KPI
 
-        cols = st.columns(len(df_acc_evo.columns))
-    
+        # KPIs par compte
         total = df_acc_evo.iloc[-1].sum()
-    
-        for i, col_name in enumerate(df_acc_evo.columns):
+        cols  = st.columns(len(df_acc_evo.columns))
 
-            values = df_acc_evo[col_name].dropna()
-        
+        for i, col_name in enumerate(df_acc_evo.columns):
+            values  = df_acc_evo[col_name].dropna()
+            current = float(values.iloc[-1])
+            pct     = (current / total * 100) if total > 0 else 0
+
             if len(values) < 2:
                 with cols[i]:
-                    display_kpi(col_name, fmt_eur(values.iloc[-1]))
+                    display_kpi(col_name, fmt_eur(current))
                 continue
-        
-            current = values.iloc[-1]
-            start = values.iloc[0]
-        
+
+            start    = float(values.iloc[0])
             perf_pct = ((current / start) - 1) * 100 if start > 0 else 0
             perf_val = current - start
-            pct = (current / total * 100) if total > 0 else 0
-        
+
             display_kpi_block(
                 cols[i],
                 col_name,
                 fmt_eur(current),
                 perf_pct,
                 is_percent=True,
-                subline=f"{fmt_eur(perf_val)} • {pct:.1f}%",
+                subline=f"{fmt_eur(perf_val)} • {pct:.1f} %",
             )
 
+        # Graphique en aires empilées
+        fig_acc = go.Figure()
+        for col_name in df_acc_evo.columns:
+            fig_acc.add_trace(go.Scatter(
+                x=df_acc_evo.index,
+                y=df_acc_evo[col_name].fillna(0),
+                name=col_name,
+                stackgroup="one",
+                hovertemplate=f"{col_name} : %{{y:,.0f}} €<extra></extra>",
+            ))
+        fig_acc.update_layout(
+            height=300,
+            margin=dict(l=0, r=0, t=20, b=0),
+            hovermode="x unified",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            xaxis=dict(showgrid=False),
+            yaxis=dict(ticksuffix=" €", tickformat=",.0f", gridcolor="#f0f0f0"),
+            plot_bgcolor="white",
+            paper_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(fig_acc, use_container_width=True)
 
     # ── Drawdown ───────────────────────────────────────────────
     st.subheader("📉 Drawdown")
@@ -1545,18 +1589,17 @@ def page_vue_globale():
 
     # ── Tableau des positions ──────────────────────────────────
     st.divider()
-    st.subheader("📋 Positions détaillées")
 
     df_positions_detail = compute_positions_with_pru(df_txn, df_assets)
 
     if df_positions_detail.empty:
         st.info("Aucune position ouverte.")
     else:
-        # KPI rapide : nb lignes + plus-value totale
-        total_pv = df_positions_detail["pv_latente"].sum()
+        total_pv           = df_positions_detail["pv_latente"].sum()
         total_invested_pos = df_positions_detail["invested"].sum()
-        pv_pct_global = (total_pv / total_invested_pos * 100) if total_invested_pos > 0 else 0.0
+        pv_pct_global      = (total_pv / total_invested_pos * 100) if total_invested_pos > 0 else 0.0
 
+        # KPIs résumés toujours visibles
         col1, col2, col3 = st.columns(3)
         col1.metric("Lignes ouvertes", len(df_positions_detail))
         col2.metric(
@@ -1564,36 +1607,32 @@ def page_vue_globale():
             fmt_eur(total_pv),
             f"{pv_pct_global:+.2f} %",
         )
-        col3.metric(
-            "Capital investi (positions)",
-            fmt_eur(total_invested_pos),
-        )
+        col3.metric("Capital investi (positions)", fmt_eur(total_invested_pos))
 
-        # Mise en forme du tableau
-        df_display = df_positions_detail.copy()
-        df_display["PRU"]            = df_display["pru"].map(lambda x: f"{x:.2f} €")
-        df_display["Prix actuel"]    = df_display["last_known_price"].map(lambda x: f"{x:.2f} €")
-        df_display["Valeur"]         = df_display["value"].map(fmt_eur)
-        df_display["Investi"]        = df_display["invested"].map(fmt_eur)
-        df_display["PV latente"]     = df_display["pv_latente"].map(
-            lambda x: f"{x:+,.0f} €".replace(",", " ")
-        )
-        df_display["PV %"]           = df_display["pv_pct"].map(lambda x: f"{x:+.2f} %")
+        # Tableau dans un expander pour alléger le scroll
+        with st.expander("📋 Voir les positions détaillées"):
+            df_display = df_positions_detail.copy()
+            df_display["PRU"]         = df_display["pru"].map(lambda x: f"{x:.2f} €")
+            df_display["Prix actuel"] = df_display["last_known_price"].map(lambda x: f"{x:.2f} €")
+            df_display["Valeur"]      = df_display["value"].map(fmt_eur)
+            df_display["Investi"]     = df_display["invested"].map(fmt_eur)
+            df_display["PV latente"]  = df_display["pv_latente"].map(
+                lambda x: f"{x:+,.0f} €".replace(",", " ")
+            )
+            df_display["PV %"]        = df_display["pv_pct"].map(lambda x: f"{x:+.2f} %")
 
-        df_display = df_display.rename(columns={
-            "name":        "Asset",
-            "asset_class": "Classe",
-            "quantity":    "Quantité",
-        })
-
-        df_display = df_display[[
-            "Asset", "Classe", "Quantité",
-            "PRU", "Prix actuel",
-            "Investi", "Valeur",
-            "PV latente", "PV %",
-        ]]
-
-        st.dataframe(df_display, use_container_width=True, hide_index=True)
+            df_display = df_display.rename(columns={
+                "name":        "Asset",
+                "asset_class": "Classe",
+                "quantity":    "Quantité",
+            })
+            df_display = df_display[[
+                "Asset", "Classe", "Quantité",
+                "PRU", "Prix actuel",
+                "Investi", "Valeur",
+                "PV latente", "PV %",
+            ]]
+            st.dataframe(df_display, use_container_width=True, hide_index=True)
 
     st.divider()
     st.caption(
