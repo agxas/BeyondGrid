@@ -32,8 +32,15 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "3.5"
+APP_VERSION = "3.6"
 PATCH_NOTES = {
+    "3.6": [
+        "Perf : _build_perf_index() réduit de ×10 à ×3 par rendu (Vue Globale) et de ×3 à ×1 (Analyses)",
+        "Refactor : compute_perf_over_period / compute_perf_value_over_period / compute_sparkline acceptent un perf_index pré-calculé",
+        "Refactor : compute_drawdown / compute_livret_a_comparison / compute_benchmark_comparison / compute_annual_performance idem",
+        "Correction : guard 'données insuffisantes' ajouté dans compute_perf_chart et compute_drawdown (évite crash si df < 2 lignes)",
+        "Correction : footer page Analyses sécurisé contre df_filtered vide (IndexError)",
+    ],
     "3.5": [
         "Ajout : rendement dividendes TTM — global (Vue Globale, Analyses, Vue par compte)",
         "Ajout : colonne Rend. div. dans les tableaux de positions (Vue Globale, Vue par compte)",
@@ -428,18 +435,24 @@ def compute_daily_change(df_snap: pd.DataFrame) -> tuple[float, float] | None:
 
     return delta_eur, delta_pct
 
-def compute_annual_performance(df_snap: pd.DataFrame) -> pd.DataFrame:
+def compute_annual_performance(
+    df_snap: pd.DataFrame,
+    perf_index: pd.Series | None = None,
+) -> pd.DataFrame:
     """
     Performance par année calendaire + YTD, nette des apports.
     Retourne : Année | Début | Fin | Perf % | Perf €
     Trié du plus récent au plus ancien.
+
+    Si perf_index est fourni (pré-calculé sur df_snap), il est utilisé
+    directement — évite de rappeler _build_perf_index inutilement.
     """
     if df_snap.empty or len(df_snap) < 2:
         return pd.DataFrame()
 
     # Indice de perf sur l'historique complet (chaîné — permet de comparer
     # les sous-périodes annuelles sans biais de capital injecté)
-    full_index   = _build_perf_index(df_snap).reset_index(drop=True)
+    full_index   = (perf_index if perf_index is not None else _build_perf_index(df_snap)).reset_index(drop=True)
     df           = df_snap.reset_index(drop=True).copy()
     df["year"]   = df["date"].dt.year
     df["pidx"]   = full_index.values
@@ -517,31 +530,55 @@ def _build_perf_index(df_snap: pd.DataFrame) -> pd.Series:
     return perf_index
 
 
-def compute_perf_over_period(df_snap: pd.DataFrame, months: int) -> float:
-    """Performance pure sur la période (nette des apports)."""
+def compute_perf_over_period(
+    df_snap: pd.DataFrame,
+    months: int,
+    perf_index: pd.Series | None = None,
+) -> float:
+    """Performance pure sur la période (nette des apports).
+
+    Si perf_index est fourni (pré-calculé sur df_period), il est utilisé
+    directement — évite de rappeler _build_perf_index inutilement.
+    """
     df_period = _slice_period(df_snap, months)
     if df_period.empty:
         return 0.0
-    idx = _build_perf_index(df_period)
+    idx = perf_index if perf_index is not None else _build_perf_index(df_period)
     return (idx.iloc[-1] - 1) * 100
 
 
-def compute_perf_value_over_period(df_snap: pd.DataFrame, months: int) -> float:
-    """Gain marché en € sur la période (hors capital injecté)."""
+def compute_perf_value_over_period(
+    df_snap: pd.DataFrame,
+    months: int,
+    perf_index: pd.Series | None = None,
+) -> float:
+    """Gain marché en € sur la période (hors capital injecté).
+
+    Si perf_index est fourni (pré-calculé sur df_period), il est utilisé
+    directement — évite de rappeler _build_perf_index inutilement.
+    """
     df_period = _slice_period(df_snap, months)
     if df_period.empty:
         return 0.0
-    idx           = _build_perf_index(df_period)
-    start_value   = float(df_period.iloc[0]["total_value"])
+    idx         = perf_index if perf_index is not None else _build_perf_index(df_period)
+    start_value = float(df_period.iloc[0]["total_value"])
     return start_value * (idx.iloc[-1] - 1)
 
 
-def compute_sparkline(df_snap: pd.DataFrame, months: int) -> str:
-    """Sparkline basée sur l'indice de performance ajusté."""
+def compute_sparkline(
+    df_snap: pd.DataFrame,
+    months: int,
+    perf_index: pd.Series | None = None,
+) -> str:
+    """Sparkline basée sur l'indice de performance ajusté.
+
+    Si perf_index est fourni (pré-calculé sur df_period), il est utilisé
+    directement — évite de rappeler _build_perf_index inutilement.
+    """
     df_period = _slice_period(df_snap, months)
     if df_period.empty:
         return ""
-    values        = _build_perf_index(df_period).values
+    values        = (perf_index if perf_index is not None else _build_perf_index(df_period)).values
     min_v, max_v  = values.min(), values.max()
     if max_v == min_v:
         return "▁" * len(values)
@@ -580,7 +617,18 @@ def compute_perf_chart(df_snap: pd.DataFrame) -> go.Figure:
     """
     Graphique Valeur totale vs Capital investi.
     Zone colorée entre les deux courbes = plus-value latente.
+    Retourne une figure vide si moins de 2 points disponibles.
     """
+    if df_snap.empty or len(df_snap) < 2:
+        fig = go.Figure()
+        fig.update_layout(height=400, margin=dict(l=0, r=0, t=30, b=0))
+        fig.add_annotation(
+            x=0.5, y=0.5, xref="paper", yref="paper",
+            text="Données insuffisantes pour afficher le graphique.",
+            showarrow=False, font=dict(color="#888888", size=13),
+        )
+        return fig
+
     dates       = df_snap["date"]
     total_value = df_snap["total_value"]
     invested    = df_snap["invested_capital"]
@@ -616,13 +664,25 @@ def compute_perf_chart(df_snap: pd.DataFrame) -> go.Figure:
     return fig
 
 
-def compute_drawdown(df_snap: pd.DataFrame) -> tuple[go.Figure, float]:
+def compute_drawdown(
+    df_snap: pd.DataFrame,
+    perf_index: pd.Series | None = None,
+) -> tuple[go.Figure, float]:
     """
     Calcule et trace le drawdown depuis le plus haut historique.
     Basé sur l'indice de perf ajusté (sans effet des apports).
     Retourne (figure, drawdown_max_en_pct).
+
+    Si perf_index est fourni (pré-calculé sur df_snap), il est utilisé
+    directement — évite de rappeler _build_perf_index inutilement.
     """
-    perf_index = _build_perf_index(df_snap).reset_index(drop=True)
+    if df_snap.empty or len(df_snap) < 2:
+        fig = go.Figure()
+        fig.update_layout(height=280, margin=dict(l=0, r=0, t=20, b=0))
+        return fig, 0.0
+
+    perf_index = perf_index if perf_index is not None else _build_perf_index(df_snap)
+    perf_index = perf_index.reset_index(drop=True)
     dates      = df_snap["date"].reset_index(drop=True)
     peak       = perf_index.expanding().max()
     drawdown   = (perf_index / peak - 1) * 100
@@ -707,25 +767,29 @@ def compute_sharpe(df_snap: pd.DataFrame, risk_free_rate: float) -> float | None
 def compute_livret_a_comparison(
     df_snap: pd.DataFrame,
     livret_a_rate: float,
+    perf_index: pd.Series | None = None,
 ) -> tuple[go.Figure, float, float, float]:
     """
     Compare la performance ajustée du portefeuille à un placement Livret A.
     La courbe portefeuille utilise l'indice de perf (sans effet des apports)
     rebased sur la valeur initiale, pour une comparaison équitable.
+
+    Si perf_index est fourni (pré-calculé sur df_snap), il est utilisé
+    directement — évite de rappeler _build_perf_index inutilement.
     """
     df          = df_snap.copy().reset_index(drop=True)
     dates       = df["date"]
     start_value = float(df["total_value"].iloc[0])
 
     # Courbe portefeuille ajustée : start_value × indice de perf
-    perf_index      = _build_perf_index(df_snap).reset_index(drop=True)
-    portef_adjusted = start_value * perf_index
+    _idx            = perf_index if perf_index is not None else _build_perf_index(df_snap)
+    portef_adjusted = start_value * _idx.reset_index(drop=True)
 
     daily_rate = (1 + livret_a_rate) ** (1 / 365) - 1
     n_days     = (dates - dates.iloc[0]).dt.days
     livret_a   = start_value * (1 + daily_rate) ** n_days
 
-    perf_portef = (perf_index.iloc[-1] - 1) * 100
+    perf_portef = (_idx.reset_index(drop=True).iloc[-1] - 1) * 100
     perf_livret = (livret_a.iloc[-1] / start_value - 1) * 100
     ecart       = perf_portef - perf_livret
 
@@ -774,18 +838,22 @@ def compute_benchmark_comparison(
     df_snap: pd.DataFrame,
     benchmark_ticker: str,
     benchmark_name: str,
+    perf_index: pd.Series | None = None,
 ) -> tuple[go.Figure, float, float | None, float | None]:
     """
     Compare la performance ajustée du portefeuille vs un benchmark.
     Les deux courbes sont rebasées à 100 au point de départ.
     Le portefeuille utilise l'indice de perf (sans effet des apports).
+
+    Si perf_index est fourni (pré-calculé sur df_snap), il est utilisé
+    directement — évite de rappeler _build_perf_index inutilement.
     """
     df     = df_snap.copy().reset_index(drop=True)
     dates  = df["date"]
 
     # Indice ajusté rebased à 100
-    perf_index     = _build_perf_index(df_snap).reset_index(drop=True)
-    portef_rebased = perf_index * 100
+    _idx           = perf_index if perf_index is not None else _build_perf_index(df_snap)
+    portef_rebased = _idx.reset_index(drop=True) * 100
     perf_portef    = float(portef_rebased.iloc[-1] - 100)
 
     start_str = dates.iloc[0].strftime("%Y-%m-%d")
@@ -1514,15 +1582,26 @@ def page_vue_globale():
 
     # ── 2. Performance récente ─────────────────────────────────────
     st.subheader("📅 Performance récente")
-    perf_1m   = compute_perf_over_period(df_snap, 1)
-    perf_3m   = compute_perf_over_period(df_snap, 3)
-    perf_12m  = compute_perf_over_period(df_snap, 12)
-    val_1m    = compute_perf_value_over_period(df_snap, 1)
-    val_3m    = compute_perf_value_over_period(df_snap, 3)
-    val_12m   = compute_perf_value_over_period(df_snap, 12)
-    spark_1m  = compute_sparkline(df_snap, 1)
-    spark_3m  = compute_sparkline(df_snap, 3)
-    spark_12m = compute_sparkline(df_snap, 12)
+
+    # Pré-calcul : chaque tranche de période est construite UNE SEULE FOIS.
+    # Les 3 fonctions (perf %, valeur €, sparkline) réutilisent le même indice
+    # au lieu de le recalculer chacune de leur côté (économie : 9 → 3 appels).
+    _period_months = [1, 3, 12]
+    _period_slices = {m: _slice_period(df_snap, m) for m in _period_months}
+    _period_idx    = {
+        m: _build_perf_index(df_s) if not df_s.empty else pd.Series(dtype=float)
+        for m, df_s in _period_slices.items()
+    }
+
+    perf_1m   = compute_perf_over_period(df_snap, 1,  perf_index=_period_idx[1])
+    perf_3m   = compute_perf_over_period(df_snap, 3,  perf_index=_period_idx[3])
+    perf_12m  = compute_perf_over_period(df_snap, 12, perf_index=_period_idx[12])
+    val_1m    = compute_perf_value_over_period(df_snap, 1,  perf_index=_period_idx[1])
+    val_3m    = compute_perf_value_over_period(df_snap, 3,  perf_index=_period_idx[3])
+    val_12m   = compute_perf_value_over_period(df_snap, 12, perf_index=_period_idx[12])
+    spark_1m  = compute_sparkline(df_snap, 1,  perf_index=_period_idx[1])
+    spark_3m  = compute_sparkline(df_snap, 3,  perf_index=_period_idx[3])
+    spark_12m = compute_sparkline(df_snap, 12, perf_index=_period_idx[12])
 
     col1, col2, col3 = st.columns(3)
     display_kpi_block(col1, "1 mois", fmt_pct(perf_1m),
@@ -1744,12 +1823,18 @@ def page_analyses():
 
     df_filtered = filter_by_period(df_snap, periode)
 
+    # Pré-calcul des indices de performance UNE SEULE FOIS par dataset.
+    # compute_drawdown, compute_livret_a_comparison, compute_benchmark_comparison
+    # et compute_annual_performance partagent ces indices au lieu de les recalculer.
+    _perf_idx_full     = _build_perf_index(df_snap)     if len(df_snap)     >= 2 else pd.Series(dtype=float)
+    _perf_idx_filtered = _build_perf_index(df_filtered) if len(df_filtered) >= 2 else pd.Series(dtype=float)
+
     st.divider()
 
     # ── Performance annuelle ───────────────────────────────────
     st.subheader("📅 Performance par année")
 
-    df_annual = compute_annual_performance(df_snap)
+    df_annual = compute_annual_performance(df_snap, perf_index=_perf_idx_full)
 
     if not df_annual.empty:
 
@@ -1894,7 +1979,7 @@ def page_analyses():
     # ── Drawdown ────────────────────────────────────────────────
     st.subheader("📉 Drawdown")
 
-    fig_dd, max_dd = compute_drawdown(df_filtered)
+    fig_dd, max_dd = compute_drawdown(df_filtered, perf_index=_perf_idx_filtered)
 
     if max_dd > -10:
         dd_label = "🟢 Faible"
@@ -1912,7 +1997,7 @@ def page_analyses():
     st.subheader("🏦 Portefeuille vs Livret A")
 
     fig_la, perf_portef, perf_livret, ecart = compute_livret_a_comparison(
-        df_filtered, risk_free_rate
+        df_filtered, risk_free_rate, perf_index=_perf_idx_filtered
     )
 
 
@@ -1955,6 +2040,7 @@ def page_analyses():
                 df_filtered,
                 selected["yahoo_ticker"],
                 selected["name"],
+                perf_index=_perf_idx_filtered,
             )
 
         col1, col2, col3 = st.columns(3)
@@ -2087,11 +2173,12 @@ def page_analyses():
 
     # ── Pied de page ───────────────────────────────────────────────
     st.divider()
-    st.caption(
-        f"Analyse sur {len(df_filtered)} jours · "
-        f"du {df_filtered.iloc[0]['date'].strftime('%d/%m/%Y')} "
-        f"au {df_filtered.iloc[-1]['date'].strftime('%d/%m/%Y')}"
-    )
+    if len(df_filtered) >= 2:
+        st.caption(
+            f"Analyse sur {len(df_filtered)} jours · "
+            f"du {df_filtered.iloc[0]['date'].strftime('%d/%m/%Y')} "
+            f"au {df_filtered.iloc[-1]['date'].strftime('%d/%m/%Y')}"
+        )
 
 
 def page_compte():
