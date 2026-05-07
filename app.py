@@ -32,8 +32,12 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "3.7"
+APP_VERSION = "3.8"
 PATCH_NOTES = {
+    "3.8": [
+        "Refactor : render_positions_table() — tableau positions mutualisé (Vue Globale + Vue par compte)",
+        "Suppression : ~55 lignes dupliquées (PRU, PV latente, Rend. div., formatage)",
+    ],
     "3.7": [
         "Robustesse : toutes les fetch_*() Supabase protégées par try/except → RuntimeError propre",
         "Robustesse : chaque page intercepte RuntimeError au chargement → st.error + st.stop() au lieu d'un crash",
@@ -1289,6 +1293,65 @@ def render_allocation_charts(df_positions: pd.DataFrame, col1, col2):
             fig.update_layout(title=title, margin=dict(l=0, r=0, t=40, b=0))
             col.plotly_chart(fig, use_container_width=True)
 
+
+def render_positions_table(
+    df_pos: pd.DataFrame,
+    by_asset_ttm: dict,
+    label_capital: str = "Capital investi",
+) -> None:
+    """
+    Affiche les KPIs de synthèse + le tableau détaillé des positions (PRU, PV, Rend. div.).
+    Mutualisé entre page_vue_globale et page_compte pour éviter la duplication.
+
+    Paramètres
+    ----------
+    df_pos        : résultat de compute_positions_with_pru()
+    by_asset_ttm  : dict {asset_id: dividendes_ttm} — peut être {} si aucun dividende
+    label_capital : libellé du KPI "capital investi" (légèrement différent selon la page)
+    """
+    if df_pos.empty:
+        st.info("Aucune position ouverte.")
+        return
+
+    total_pv      = df_pos["pv_latente"].sum()
+    total_inv_pos = df_pos["invested"].sum()
+    pv_pct        = (total_pv / total_inv_pos * 100) if total_inv_pos > 0 else 0.0
+
+    col1, col2, col3 = st.columns(3)
+    display_kpi_block(col1, "Lignes ouvertes",        str(len(df_pos)))
+    display_kpi_block(col2, "Plus-value latente totale", fmt_eur(total_pv),
+                      pv_pct, is_percent=True)
+    display_kpi_block(col3, label_capital,            fmt_eur(total_inv_pos))
+
+    with st.expander("Voir le tableau détaillé"):
+        df_display = df_pos.copy()
+
+        # Rendement dividendes TTM par position
+        df_display["div_ttm"]    = df_display["asset_id"].map(by_asset_ttm).fillna(0.0)
+        df_display["Rend. div."] = df_display.apply(
+            lambda r: f"{r['div_ttm'] / r['value'] * 100:.2f} %"
+            if r["value"] > 0 and r["div_ttm"] > 0 else "—",
+            axis=1,
+        )
+
+        df_display["PRU"]         = df_display["pru"].map(lambda x: f"{x:.2f} €")
+        df_display["Prix actuel"] = df_display["last_known_price"].map(lambda x: f"{x:.2f} €")
+        df_display["Valeur"]      = df_display["value"].map(fmt_eur)
+        df_display["Investi"]     = df_display["invested"].map(fmt_eur)
+        df_display["PV latente"]  = df_display["pv_latente"].map(
+            lambda x: f"{x:+,.0f} €".replace(",", " ")
+        )
+        df_display["PV %"]        = df_display["pv_pct"].map(lambda x: f"{x:+.2f} %")
+        df_display = df_display.rename(columns={
+            "name": "Asset", "asset_class": "Classe", "quantity": "Quantité",
+        })
+        df_display = df_display[[
+            "Asset", "Classe", "Quantité",
+            "PRU", "Prix actuel", "Investi", "Valeur",
+            "PV latente", "PV %", "Rend. div.",
+        ]]
+        st.dataframe(df_display, use_container_width=True, hide_index=True)
+
 def compute_global_positions(df_txn: pd.DataFrame, df_assets: pd.DataFrame) -> pd.DataFrame:
     """
     Reconstruit toutes les positions (tous comptes confondus)
@@ -1769,52 +1832,12 @@ def page_vue_globale():
 
     with tab_pos:
         df_positions_detail = compute_positions_with_pru(df_txn, df_assets)
-
-        if df_positions_detail.empty:
-            st.info("Aucune position ouverte.")
-        else:
-            total_pv           = df_positions_detail["pv_latente"].sum()
-            total_invested_pos = df_positions_detail["invested"].sum()
-            pv_pct_global      = (
-                total_pv / total_invested_pos * 100
-            ) if total_invested_pos > 0 else 0.0
-
-            col1, col2, col3 = st.columns(3)
-            display_kpi_block(col1, "Lignes ouvertes",             str(len(df_positions_detail)))
-            display_kpi_block(col2, "Plus-value latente totale",   fmt_eur(total_pv),
-                              pv_pct_global, is_percent=True)
-            display_kpi_block(col3, "Capital investi (positions)", fmt_eur(total_invested_pos))
-
-            with st.expander("Voir le tableau détaillé"):
-                df_display = df_positions_detail.copy()
-                # Yield par position (dividendes TTM / valeur)
-                by_ttm = div_data.get("by_asset_ttm", {}) if not div_data.get("empty") else {}
-                df_display["div_ttm"]     = df_display["asset_id"].map(by_ttm).fillna(0.0)
-                df_display["Rend. div."]  = df_display.apply(
-                    lambda r: f"{r['div_ttm'] / r['value'] * 100:.2f} %"
-                    if r["value"] > 0 and r["div_ttm"] > 0 else "—", axis=1
-                )
-                df_display["PRU"]         = df_display["pru"].map(lambda x: f"{x:.2f} €")
-                df_display["Prix actuel"] = df_display["last_known_price"].map(
-                    lambda x: f"{x:.2f} €"
-                )
-                df_display["Valeur"]      = df_display["value"].map(fmt_eur)
-                df_display["Investi"]     = df_display["invested"].map(fmt_eur)
-                df_display["PV latente"]  = df_display["pv_latente"].map(
-                    lambda x: f"{x:+,.0f} €".replace(",", " ")
-                )
-                df_display["PV %"]        = df_display["pv_pct"].map(
-                    lambda x: f"{x:+.2f} %"
-                )
-                df_display = df_display.rename(columns={
-                    "name": "Asset", "asset_class": "Classe", "quantity": "Quantité",
-                })
-                df_display = df_display[[
-                    "Asset", "Classe", "Quantité",
-                    "PRU", "Prix actuel", "Investi", "Valeur",
-                    "PV latente", "PV %", "Rend. div.",
-                ]]
-                st.dataframe(df_display, use_container_width=True, hide_index=True)
+        by_ttm = div_data.get("by_asset_ttm", {}) if not div_data.get("empty") else {}
+        render_positions_table(
+            df_positions_detail,
+            by_asset_ttm=by_ttm,
+            label_capital="Capital investi (positions)",
+        )
 
     with tab_alloc:
         df_positions_global = compute_global_positions(df_txn, df_assets)
@@ -2315,44 +2338,12 @@ def page_compte():
 
     with tab_pos:
         df_pos = compute_positions_with_pru(df_txn_acc, df_assets)
-        if df_pos.empty:
-            st.info("Aucune position ouverte sur ce compte.")
-        else:
-            total_pv      = df_pos["pv_latente"].sum()
-            total_inv_pos = df_pos["invested"].sum()
-            pv_pct        = (total_pv / total_inv_pos * 100) if total_inv_pos > 0 else 0.0
-
-            c1, c2, c3 = st.columns(3)
-            display_kpi_block(c1, "Lignes ouvertes",           str(len(df_pos)))
-            display_kpi_block(c2, "Plus-value latente totale", fmt_eur(total_pv),
-                              pv_pct, is_percent=True)
-            display_kpi_block(c3, "Capital investi",           fmt_eur(total_inv_pos))
-
-            with st.expander("Voir le tableau détaillé"):
-                df_disp = df_pos.copy()
-                by_ttm_acc = div_acc.get("by_asset_ttm", {}) if not div_acc.get("empty") else {}
-                df_disp["div_ttm"]    = df_disp["asset_id"].map(by_ttm_acc).fillna(0.0)
-                df_disp["Rend. div."] = df_disp.apply(
-                    lambda r: f"{r['div_ttm'] / r['value'] * 100:.2f} %"
-                    if r["value"] > 0 and r["div_ttm"] > 0 else "—", axis=1
-                )
-                df_disp["PRU"]         = df_disp["pru"].map(lambda x: f"{x:.2f} €")
-                df_disp["Prix actuel"] = df_disp["last_known_price"].map(lambda x: f"{x:.2f} €")
-                df_disp["Valeur"]      = df_disp["value"].map(fmt_eur)
-                df_disp["Investi"]     = df_disp["invested"].map(fmt_eur)
-                df_disp["PV latente"]  = df_disp["pv_latente"].map(
-                    lambda x: f"{x:+,.0f} €".replace(",", " ")
-                )
-                df_disp["PV %"]        = df_disp["pv_pct"].map(lambda x: f"{x:+.2f} %")
-                df_disp = df_disp.rename(columns={
-                    "name": "Asset", "asset_class": "Classe", "quantity": "Quantité",
-                })
-                df_disp = df_disp[[
-                    "Asset", "Classe", "Quantité",
-                    "PRU", "Prix actuel", "Investi", "Valeur",
-                    "PV latente", "PV %", "Rend. div.",
-                ]]
-                st.dataframe(df_disp, use_container_width=True, hide_index=True)
+        by_ttm_acc = div_acc.get("by_asset_ttm", {}) if not div_acc.get("empty") else {}
+        render_positions_table(
+            df_pos,
+            by_asset_ttm=by_ttm_acc,
+            label_capital="Capital investi",
+        )
 
     with tab_alloc:
         df_pos_alloc = compute_global_positions(df_txn_acc, df_assets)
