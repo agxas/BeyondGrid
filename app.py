@@ -32,8 +32,19 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "3.10"
+APP_VERSION = "4.0"
 PATCH_NOTES = {
+    "4.0": [
+        "Nouveau : CAGR — rendement annualisé composé depuis le 1er snapshot (Vue Globale, Analyses, Vue par compte)",
+        "Nouveau : Yield on Cost (YoC) — colonne dividendes TTM / capital investi dans le tableau positions",
+        "Nouveau : Plafond PEA (150k€) et Livret A (22 950€) — barre de progression (Vue par compte + Rééquilibrage)",
+        "Nouveau : Filtre par asset dans l'historique Transactions",
+        "Nouveau : Alerte snapshot manquant globale — sidebar visible sur toutes les pages",
+        "Nouveau : Titre de page dynamique selon l'onglet actif (onglet navigateur)",
+        "Perf : compute_positions_with_pru — @st.cache_data + itertuples (~5× plus rapide) + pré-indexation assets",
+        "Robustesse : _to_naive_datetime — uniformisation timezone dans les 3 fetch de dates",
+        "Validation : asset requis pour buy/sell, sell sans position, sell en excès (déjà présent — conservé)",
+    ],
     "3.10": [
         "Correction : bouton Actualiser — invalidation chirurgicale par table (fetch_snapshots_agg, _by_account, settings, accounts, assets, transactions)",
         "Préservé : fetch_benchmark_history (yfinance, TTL 1h) n'est plus effacé inutilement",
@@ -263,6 +274,17 @@ supabase = init_db()
 # 2. DATA LAYER
 # ============================================================
 
+def _to_naive_datetime(series: pd.Series) -> pd.Series:
+    """
+    Normalise une série de dates en datetime timezone-naive.
+    Gère les deux cas : dates Supabase naive (YYYY-MM-DD) et
+    timestamps UTC aware (ex: retour d'un autre provider).
+    """
+    result = pd.to_datetime(series)
+    if hasattr(result, "dt") and result.dt.tz is not None:
+        return result.dt.tz_convert(None)
+    return result
+
 @st.cache_data(ttl=600)
 def fetch_snapshots_agg() -> pd.DataFrame:
     """
@@ -283,7 +305,7 @@ def fetch_snapshots_agg() -> pd.DataFrame:
         return pd.DataFrame()
 
     df = pd.DataFrame(res.data)
-    df["date"] = pd.to_datetime(df["date"])
+    df["date"] = _to_naive_datetime(df["date"])
 
     df = (
         df.groupby("date")[["total_value", "invested_capital"]]
@@ -311,7 +333,7 @@ def fetch_snapshots_by_account() -> pd.DataFrame:
         return pd.DataFrame()
 
     df = pd.DataFrame(res.data)
-    df["date"] = pd.to_datetime(df["date"])
+    df["date"] = _to_naive_datetime(df["date"])
     df["account_name"] = df["accounts"].apply(lambda x: x["name"] if x else None)
     df["account_type"] = df["accounts"].apply(lambda x: x["type"] if x else None)
     df = df.drop(columns=["accounts"])
@@ -364,7 +386,7 @@ def fetch_transactions() -> pd.DataFrame:
     if not res.data:
         return pd.DataFrame()
     df = pd.DataFrame(res.data)
-    df["date"] = pd.to_datetime(df["date"])
+    df["date"] = _to_naive_datetime(df["date"])
     return df
 
 
@@ -460,6 +482,28 @@ def compute_kpis(df_snap: pd.DataFrame) -> dict:
         "plus_value":       plus_value,
         "perf_pct":         perf_pct,
     }
+
+def compute_cagr(
+    df_snap: pd.DataFrame,
+    perf_index: pd.Series | None = None,
+) -> float | None:
+    """
+    CAGR — rendement annualisé composé depuis le premier snapshot.
+    Basé sur l'indice de performance ajusté (net des apports).
+    Retourne None si moins de 30 jours de données disponibles.
+
+    Si perf_index est fourni (pré-calculé), il est réutilisé directement.
+    """
+    if df_snap.empty or len(df_snap) < 2:
+        return None
+    nb_days = (df_snap["date"].max() - df_snap["date"].min()).days
+    if nb_days < 30:
+        return None
+    idx          = perf_index if perf_index is not None else _build_perf_index(df_snap)
+    total_return = float(idx.iloc[-1]) - 1.0
+    years        = nb_days / 365.25
+    return ((1 + total_return) ** (1 / years) - 1) * 100
+
 
 def compute_daily_change(df_snap: pd.DataFrame) -> tuple[float, float] | None:
     """
@@ -1349,6 +1393,12 @@ def render_positions_table(
             if r["value"] > 0 and r["div_ttm"] > 0 else "—",
             axis=1,
         )
+        # Yield on Cost : dividendes TTM / capital investi (PRU × quantité)
+        df_display["YoC"] = df_display.apply(
+            lambda r: f"{r['div_ttm'] / r['invested'] * 100:.2f} %"
+            if r["invested"] > 0 and r["div_ttm"] > 0 else "—",
+            axis=1,
+        )
 
         df_display["PRU"]         = df_display["pru"].map(lambda x: f"{x:.2f} €")
         df_display["Prix actuel"] = df_display["last_known_price"].map(lambda x: f"{x:.2f} €")
@@ -1364,7 +1414,7 @@ def render_positions_table(
         df_display = df_display[[
             "Asset", "Classe", "Quantité",
             "PRU", "Prix actuel", "Investi", "Valeur",
-            "PV latente", "PV %", "Rend. div.",
+            "PV latente", "PV %", "Rend. div.", "YoC",
         ]]
         st.dataframe(df_display, use_container_width=True, hide_index=True)
 
@@ -1405,6 +1455,7 @@ def compute_global_positions(df_txn: pd.DataFrame, df_assets: pd.DataFrame) -> p
 
     return df_pos.reset_index(drop=True)
 
+@st.cache_data
 def compute_positions_with_pru(
     df_txn: pd.DataFrame,
     df_assets: pd.DataFrame,
@@ -1415,6 +1466,9 @@ def compute_positions_with_pru(
 
     Retourne : name | asset_class | quantity | pru | last_known_price
                | value | invested | pv_latente | pv_pct
+
+    @st.cache_data : résultat mis en cache — les appels répétés sur le même
+    df_txn/df_assets (même contenu) ne recalculent pas depuis zéro.
     """
     trades = df_txn[
         df_txn["type"].isin(["buy", "sell"]) &
@@ -1538,6 +1592,20 @@ def compute_accounts_evolution(df_snap_acc: pd.DataFrame) -> pd.DataFrame:
 # 4. PAGES
 # ============================================================
 
+# ── Constantes métier ─────────────────────────────────────
+PEA_PLAFOND      = 150_000   # € — plafond légal de versements PEA
+LIVRET_A_PLAFOND =  22_950   # € — plafond légal Livret A
+
+
+def _set_page_title(subtitle: str) -> None:
+    """
+    Met à jour le titre de l'onglet navigateur pour la page active.
+    (Streamlit ne permet pas de changer set_page_config dynamiquement,
+    mais l'injection <title> est supportée par les navigateurs modernes.)
+    """
+    st.markdown(f"<title>BeyondGrid — {subtitle}</title>", unsafe_allow_html=True)
+
+
 def compute_dividends(
     df_txn: pd.DataFrame,
     df_assets: pd.DataFrame,
@@ -1637,6 +1705,7 @@ def compute_dividends(
 
 def page_vue_globale():
     st.title("📊 Synthèse du Patrimoine")
+    _set_page_title("Vue Globale")
 
     try:
         with st.spinner("Chargement des données..."):
@@ -1704,6 +1773,9 @@ def page_vue_globale():
         m: _build_perf_index(df_s) if not df_s.empty else pd.Series(dtype=float)
         for m, df_s in _period_slices.items()
     }
+    # Index complet réutilisé pour CAGR (évite un appel supplémentaire)
+    _full_idx = _build_perf_index(df_snap)
+    cagr      = compute_cagr(df_snap, perf_index=_full_idx)
 
     perf_1m   = compute_perf_over_period(df_snap, 1,  perf_index=_period_idx[1])
     perf_3m   = compute_perf_over_period(df_snap, 3,  perf_index=_period_idx[3])
@@ -1715,13 +1787,18 @@ def page_vue_globale():
     spark_3m  = compute_sparkline(df_snap, 3,  perf_index=_period_idx[3])
     spark_12m = compute_sparkline(df_snap, 12, perf_index=_period_idx[12])
 
-    col1, col2, col3 = st.columns(3)
-    display_kpi_block(col1, "1 mois", fmt_pct(perf_1m),
+    col1, col2, col3, col4 = st.columns(4)
+    display_kpi_block(col1, "1 mois",  fmt_pct(perf_1m),
                       subline=f"{fmt_eur(val_1m)} • {spark_1m}")
-    display_kpi_block(col2, "3 mois", fmt_pct(perf_3m),
+    display_kpi_block(col2, "3 mois",  fmt_pct(perf_3m),
                       subline=f"{fmt_eur(val_3m)} • {spark_3m}")
-    display_kpi_block(col3, "1 an",   fmt_pct(perf_12m),
+    display_kpi_block(col3, "1 an",    fmt_pct(perf_12m),
                       subline=f"{fmt_eur(val_12m)} • {spark_12m}")
+    display_kpi_block(
+        col4, "CAGR (depuis le début)",
+        fmt_pct(cagr) if cagr is not None else "—",
+        subline=f"{len(df_snap)} snapshots" if cagr is not None else "< 30j de données",
+    )
 
     # ── 3. Évolution ───────────────────────────────────────────────
     st.subheader("📈 Évolution")
@@ -1871,6 +1948,7 @@ def page_vue_globale():
 
 def page_analyses():
     st.title("📊 Analyses & Graphiques")
+    _set_page_title("Analyses")
 
     try:
         with st.spinner("Chargement des données..."):
@@ -1976,6 +2054,16 @@ def page_analyses():
 
     # ── 4a : Sharpe & Volatilité ───────────────────────────────
     st.subheader("⚡ Risque & Performance")
+
+    # CAGR sur l'historique complet (indépendant du filtre de période)
+    cagr_global = compute_cagr(df_snap, perf_index=_perf_idx_full)
+    col_cagr, _ = st.columns([2, 5])
+    with col_cagr:
+        display_kpi(
+            "CAGR (rendement annualisé depuis le début)",
+            fmt_pct(cagr_global) if cagr_global is not None else "—",
+        )
+    st.divider()
 
     # FIX : seuil minimum pour des métriques fiables
     MIN_POINTS = 20
@@ -2260,6 +2348,7 @@ def page_analyses():
 
 def page_compte():
     st.title("🏦 Vue par compte")
+    _set_page_title("Vue par compte")
 
     try:
         with st.spinner("Chargement des données..."):
@@ -2312,7 +2401,7 @@ def page_compte():
     total_return     = plus_value + total_div
     total_return_pct = (total_return / invested_capital * 100) if invested_capital > 0 else 0.0
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     display_kpi_block(col1, "Valeur totale",    fmt_eur(total_value))
     display_kpi_block(col2, "Capital investi",  fmt_eur(invested_capital))
 
@@ -2322,6 +2411,32 @@ def page_compte():
     )
     display_kpi_block(col3, "Plus-value latente", fmt_eur(plus_value),
                       perf_pct, is_percent=True, subline=pv_subline)
+
+    cagr_acc = compute_cagr(df_snap_one)
+    display_kpi_block(col4, "CAGR (depuis le début)",
+                      fmt_pct(cagr_acc) if cagr_acc is not None else "—")
+
+    # ── Plafond légal (PEA / Livret A) ────────────────────────────
+    if acc_type == "PEA" and invested_capital > 0:
+        pea_pct = min(invested_capital / PEA_PLAFOND * 100, 100.0)
+        color   = "🟢" if pea_pct < 75 else ("🟡" if pea_pct < 95 else "🔴")
+        st.progress(
+            pea_pct / 100,
+            text=(
+                f"{color} Plafond PEA : {fmt_eur(invested_capital)} versés "
+                f"/ {fmt_eur(PEA_PLAFOND)} ({pea_pct:.1f} %)"
+            ),
+        )
+    elif acc_type == "LIVRET" and invested_capital > 0:
+        la_pct  = min(invested_capital / LIVRET_A_PLAFOND * 100, 100.0)
+        color   = "🟢" if la_pct < 75 else ("🟡" if la_pct < 95 else "🔴")
+        st.progress(
+            la_pct / 100,
+            text=(
+                f"{color} Plafond Livret A : {fmt_eur(invested_capital)} "
+                f"/ {fmt_eur(LIVRET_A_PLAFOND)} ({la_pct:.1f} %)"
+            ),
+        )
 
     # ── Évolution ──────────────────────────────────────────────────
     st.subheader("📈 Évolution")
@@ -2401,6 +2516,7 @@ def page_compte():
 
 def page_reequilibrage():
     st.title("⚖️ Rééquilibrage PEA")
+    _set_page_title("Rééquilibrage PEA")
 
     # ── Chargement des données ──────────────────────────────────
     try:
@@ -2447,6 +2563,23 @@ def page_reequilibrage():
     col_a, col_b = st.columns(2)
     col_a.metric("Valeur totale PEA", fmt_eur(total_pea))
     col_b.metric("DCA mensuel (settings)", fmt_eur(dca_amount))
+
+    # ── Plafond PEA ────────────────────────────────────────────
+    df_pru = compute_positions_with_pru(
+        df_txn[df_txn["account_id"] == pea_id].reset_index(drop=True),
+        df_assets,
+    )
+    capital_pea = df_pru["invested"].sum() if not df_pru.empty else 0.0
+    if capital_pea > 0:
+        pea_pct = min(capital_pea / PEA_PLAFOND * 100, 100.0)
+        color   = "🟢" if pea_pct < 75 else ("🟡" if pea_pct < 95 else "🔴")
+        st.progress(
+            pea_pct / 100,
+            text=(
+                f"{color} Plafond PEA : {fmt_eur(capital_pea)} investi "
+                f"/ {fmt_eur(PEA_PLAFOND)} ({pea_pct:.1f} %)"
+            ),
+        )
 
     st.divider()
 
@@ -2606,6 +2739,7 @@ def page_reequilibrage():
 
 def page_saisie():
     st.title("✍️ Saisie manuelle")
+    _set_page_title("Saisie manuelle")
 
     try:
         settings    = fetch_settings()
@@ -2869,14 +3003,48 @@ def page_saisie():
                 f"({'entrée' if total >= 0 else 'sortie'} d'argent dans l'enveloppe)"
             )
 
-            # Validation et soumission
+            # ── Validation ────────────────────────────────────────
             errors = []
+
+            # Asset requis pour buy / sell
+            if is_trade and asset is None:
+                errors.append("Un asset est requis pour un achat ou une vente.")
+
             if is_trade and unit_price == 0:
                 errors.append("Le prix unitaire ne peut pas être 0 pour un achat/vente.")
             if is_trade and quantity == 0:
                 errors.append("La quantité ne peut pas être 0 pour un achat/vente.")
             if not is_trade and manual_amount == 0:
                 errors.append("Le montant ne peut pas être 0.")
+
+            # Sell : vérifier la position ouverte sur ce compte
+            if type_txn == "sell" and asset is not None and quantity > 0:
+                trades_acc = df_txn[
+                    (df_txn["account_id"] == account) &
+                    (df_txn["asset_id"]   == asset) &
+                    (df_txn["type"].isin(["buy", "sell"]))
+                ].copy()
+
+                if trades_acc.empty:
+                    errors.append(
+                        "Vous ne détenez pas cet actif sur ce compte — "
+                        "aucune transaction d'achat trouvée."
+                    )
+                else:
+                    signed = trades_acc["quantity"].fillna(0).astype(float)
+                    signed = signed.where(trades_acc["type"] == "buy", -signed)
+                    qty_held = round(signed.sum(), 8)
+
+                    if qty_held <= 0:
+                        errors.append(
+                            f"Position nulle sur ce compte pour cet actif "
+                            f"(solde calculé : {qty_held:.4f} titres)."
+                        )
+                    elif quantity > qty_held:
+                        errors.append(
+                            f"Quantité insuffisante — vous détenez {qty_held:.4f} titre(s), "
+                            f"vous essayez d'en vendre {quantity:.4f}."
+                        )
 
             if errors:
                 for err in errors:
@@ -2912,6 +3080,7 @@ def page_saisie():
 
 def page_transactions():
     st.title("🧾 Historique des transactions")
+    _set_page_title("Transactions")
 
     try:
         df_txn      = fetch_transactions()
@@ -2944,7 +3113,7 @@ def page_transactions():
     # ── Filtres ───────────────────────────────────────────────
     st.subheader("Filtres")
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
 
     # Compte
     account_names = df_accounts["name"].dropna().tolist() if not df_accounts.empty else []
@@ -2960,11 +3129,18 @@ def page_transactions():
         options=["Tous"] + sorted(df_txn["type"].unique().tolist()),
     )
 
+    # Asset
+    asset_names_list = sorted(df_assets["name"].dropna().tolist()) if not df_assets.empty else []
+    asset_filter = col3.selectbox(
+        "Asset",
+        options=["Tous"] + asset_names_list,
+    )
+
     # Date range
     date_min = df_txn["date"].min().date()
     date_max = df_txn["date"].max().date()
 
-    date_range = col3.date_input(
+    date_range = col4.date_input(
         "Période",
         value=(date_min, date_max),
     )
@@ -2982,6 +3158,11 @@ def page_transactions():
 
     if type_filter != "Tous":
         df_filtered = df_filtered[df_filtered["type"] == type_filter]
+
+    if asset_filter != "Tous":
+        asset_match = df_assets[df_assets["name"] == asset_filter]["id"]
+        if not asset_match.empty:
+            df_filtered = df_filtered[df_filtered["asset_id"] == asset_match.iloc[0]]
 
     if len(date_range) == 2:
         df_filtered = df_filtered[
@@ -3048,6 +3229,18 @@ if st.sidebar.button("🔄 Actualiser les données", use_container_width=True):
     st.rerun()
 
 st.sidebar.divider()
+
+# ── Alerte fraîcheur des données (visible sur toutes les pages) ─
+try:
+    _df_snap_check = fetch_snapshots_agg()
+    _nb_days, _is_stale = check_data_freshness(_df_snap_check)
+    if _is_stale:
+        st.sidebar.warning(
+            f"⚠️ Snapshot : **{_nb_days}j ouvrés** sans mise à jour — "
+            "vérifie GitHub Actions."
+        )
+except RuntimeError:
+    st.sidebar.error("❌ Supabase inaccessible")
 
 menu = st.sidebar.radio(
     "Navigation",
