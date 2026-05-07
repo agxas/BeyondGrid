@@ -32,8 +32,12 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "3.9"
+APP_VERSION = "3.10"
 PATCH_NOTES = {
+    "3.10": [
+        "Correction : bouton Actualiser — invalidation chirurgicale par table (fetch_snapshots_agg, _by_account, settings, accounts, assets, transactions)",
+        "Préservé : fetch_benchmark_history (yfinance, TTL 1h) n'est plus effacé inutilement",
+    ],
     "3.9": [
         "Correction : compute_kpis() — guard ajouté si df_snap vide (retourne dict de zéros au lieu de crasher)",
         "Correction : page Analyses — section dividendes utilisait fetch_snapshots_agg() redondant au lieu du df_snap déjà chargé",
@@ -3033,7 +3037,14 @@ st.sidebar.caption("Suivi d'investissement")
 
 # ── Bouton de rafraîchissement manuel ──────────────────────
 if st.sidebar.button("🔄 Actualiser les données", use_container_width=True):
-    st.cache_data.clear()
+    # Invalidation chirurgicale : uniquement les tables Supabase.
+    # fetch_benchmark_history (yfinance, TTL 1h) est intentionnellement conservé.
+    fetch_snapshots_agg.clear()
+    fetch_snapshots_by_account.clear()
+    fetch_settings.clear()
+    fetch_accounts.clear()
+    fetch_assets.clear()
+    fetch_transactions.clear()
     st.rerun()
 
 st.sidebar.divider()
