@@ -32,8 +32,13 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "4.0"
+APP_VERSION = "4.1"
 PATCH_NOTES = {
+    "4.1": [
+        "Correctif : itertuples() + pré-indexation assets dans compute_positions_with_pru (fix annoncé en v4.0 mais non appliqué)",
+        "Nouveau : Date estimée FIRE — calcul exact par formule de valeur future (Vue Globale, section FIRE)",
+        "Nouveau : Projection DCA multi-scénarios — pessimiste/neutre/optimiste ±3 % sur un même graphique (Analyses)",
+    ],
     "4.0": [
         "Nouveau : CAGR (rendement annualisé composé) — Vue Globale (4ème KPI perf) et Vue par compte",
         "Nouveau : Yield on Cost (YoC) — colonne dividendes TTM / capital investi dans le tableau positions",
@@ -706,6 +711,51 @@ def compute_fire(kpis: dict, settings: dict) -> dict:
     }
 
 
+def compute_fire_date(
+    current_value: float,
+    monthly_dca: float,
+    annual_return: float,
+    fire_target: float,
+) -> pd.Timestamp | None:
+    """
+    Estime la date d'atteinte de l'objectif FIRE via la formule de valeur future.
+
+    Avec DCA mensuel constant :
+      V_t = V_0 * (1+r)^t + DCA * ((1+r)^t − 1) / r
+    Soit :
+      t = log((fire_target + DCA/r) / (V_0 + DCA/r)) / log(1+r)
+
+    Retourne None si le target est déjà atteint, non calculable, ou > 100 ans.
+    """
+    if fire_target <= 0 or current_value >= fire_target:
+        return None
+
+    monthly_return = (1 + annual_return) ** (1 / 12) - 1
+    if monthly_return <= 0:
+        return None
+
+    try:
+        if monthly_dca > 0:
+            numerator   = fire_target + monthly_dca / monthly_return
+            denominator = current_value + monthly_dca / monthly_return
+        else:
+            numerator   = fire_target
+            denominator = max(current_value, 1e-9)
+
+        if denominator <= 0 or numerator / denominator <= 1:
+            return None
+
+        months = math.log(numerator / denominator) / math.log(1 + monthly_return)
+    except (ValueError, ZeroDivisionError):
+        return None
+
+    months_int = int(math.ceil(months))
+    if months_int > 1200:   # > 100 ans → on n'affiche pas
+        return None
+
+    return pd.Timestamp.today() + pd.DateOffset(months=months_int)
+
+
 def compute_perf_chart(df_snap: pd.DataFrame) -> go.Figure:
     """
     Graphique Valeur totale vs Capital investi.
@@ -1129,6 +1179,90 @@ def compute_dca_projection(
     return fig, theorique_list, reel_list, capital_list
 
 
+def compute_dca_projection_multi(
+    current_value: float,
+    current_invested: float,
+    monthly_dca: float,
+    annual_return: float,
+    inflation_rate: float,
+    fire_target: float,
+    years: int = 20,
+) -> tuple[go.Figure, list, list, list]:
+    """
+    Projection DCA sur 3 scénarios (pessimiste / neutre / optimiste) sur un seul graphique.
+
+    Les écarts sont fixes : ±3 % par rapport au rendement de base.
+    Retourne (figure, theorique_neutre, reel_neutre, capital) pour que les KPIs
+    restent calculés sur le scénario de base.
+    """
+    scenarios = [
+        ("Pessimiste",  annual_return - 0.03, "#E84C4C", "dot"),
+        ("Neutre",      annual_return,         "#4C9BE8", "solid"),
+        ("Optimiste",   annual_return + 0.03,  "#2ECC71", "dot"),
+    ]
+
+    monthly_infl = (1 + inflation_rate) ** (1 / 12) - 1
+    today        = pd.Timestamp.today().normalize()
+    months       = years * 12
+
+    fig = go.Figure()
+    theorique_neutre, reel_neutre, capital_neutre = [], [], []
+
+    for label, rate, color, dash in scenarios:
+        monthly_r  = (1 + max(rate, 0.001)) ** (1 / 12) - 1
+        val        = current_value
+        cap        = current_invested
+        dates, capital_l, theorique_l, reel_l = [], [], [], []
+
+        for m in range(months + 1):
+            dates.append(today + pd.DateOffset(months=m))
+            capital_l.append(cap)
+            theorique_l.append(val)
+            reel_l.append(val / (1 + monthly_infl) ** m)
+            val = val * (1 + monthly_r) + monthly_dca
+            cap += monthly_dca
+
+        if label == "Neutre":
+            theorique_neutre, reel_neutre, capital_neutre = theorique_l, reel_l, capital_l
+            # Capital investi (tracé une seule fois)
+            fig.add_trace(go.Scatter(
+                x=dates, y=capital_l,
+                name="Capital investi",
+                line=dict(color="#888888", width=2, dash="dot"),
+                hovertemplate="%{y:,.0f} €<extra>Capital investi</extra>",
+            ))
+
+        fig.add_trace(go.Scatter(
+            x=dates, y=theorique_l,
+            name=f"{label} ({rate*100:+.0f} %/an)" if label != "Neutre" else f"Neutre ({rate*100:.0f} %/an)",
+            line=dict(color=color, width=2.5 if label == "Neutre" else 1.8, dash=dash),
+            hovertemplate=f"%{{y:,.0f}} €<extra>{label}</extra>",
+        ))
+
+    # Ligne objectif FIRE
+    if fire_target > 0:
+        fig.add_hline(
+            y=fire_target,
+            line_dash="dash", line_color="#2ECC71", line_width=1.5,
+            annotation_text=f"  🎯 FIRE : {fmt_eur(fire_target)}",
+            annotation_position="top left",
+            annotation_font_color="#2ECC71",
+        )
+
+    fig.update_layout(
+        height=450,
+        margin=dict(l=0, r=0, t=30, b=0),
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        xaxis=dict(showgrid=False),
+        yaxis=dict(ticksuffix=" €", tickformat=",.0f", gridcolor="#f0f0f0"),
+        plot_bgcolor="white",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+
+    return fig, theorique_neutre, reel_neutre, capital_neutre
+
+
 def compute_pea_positions(
     df_transactions: pd.DataFrame,
     df_assets: pd.DataFrame,
@@ -1467,8 +1601,10 @@ def compute_positions_with_pru(
     Retourne : name | asset_class | quantity | pru | last_known_price
                | value | invested | pv_latente | pv_pct
 
-    @st.cache_data : résultat mis en cache — les appels répétés sur le même
-    df_txn/df_assets (même contenu) ne recalculent pas depuis zéro.
+    Optimisations :
+    - @st.cache_data   : résultat mis en cache par contenu des DataFrames d'entrée
+    - itertuples()     : ~5× plus rapide qu'iterrows (pas de création de Series)
+    - asset_index      : pré-indexation assets → lookup O(1) au lieu de O(n) par asset
     """
     trades = df_txn[
         df_txn["type"].isin(["buy", "sell"]) &
@@ -1478,21 +1614,25 @@ def compute_positions_with_pru(
     if trades.empty:
         return pd.DataFrame()
 
+    # Pré-indexer les assets une seule fois (évite df_assets[id == x] dans la boucle)
+    asset_index = df_assets.set_index("id")
+
     rows = []
 
     for asset_id, group in trades.groupby("asset_id"):
         qty_held   = 0.0
         total_cost = 0.0
 
-        for _, row in group.iterrows():
-            qty   = float(row["quantity"] or 0)
-            price = float(row["unit_price"] or 0)
-            fees  = float(row["fees"] or 0)
+        # itertuples est ~5× plus rapide qu'iterrows car il ne crée pas de Series
+        for row in group.itertuples(index=False):
+            qty   = float(row.quantity or 0)
+            price = float(row.unit_price or 0)
+            fees  = float(row.fees or 0)
 
-            if row["type"] == "buy":
+            if row.type == "buy":
                 total_cost += qty * price + fees
                 qty_held   += qty
-            elif row["type"] == "sell" and qty_held > 0:
+            elif row.type == "sell" and qty_held > 0:
                 avg_cost    = total_cost / qty_held
                 total_cost -= avg_cost * min(qty, qty_held)
                 qty_held    = max(0.0, qty_held - qty)
@@ -1502,13 +1642,13 @@ def compute_positions_with_pru(
 
         pru = total_cost / qty_held if qty_held > 0 else 0.0
 
-        asset_row     = df_assets[df_assets["id"] == asset_id]
-        if asset_row.empty:
+        if asset_id not in asset_index.index:
             continue
 
-        name          = asset_row.iloc[0]["name"]
-        asset_class   = asset_row.iloc[0]["asset_class"]
-        current_price = float(asset_row.iloc[0]["last_known_price"] or 0)
+        asset_row     = asset_index.loc[asset_id]
+        name          = asset_row["name"]
+        asset_class   = asset_row["asset_class"]
+        current_price = float(asset_row["last_known_price"] or 0)
         value         = qty_held * current_price
         invested      = qty_held * pru
         pv_latente    = value - invested
@@ -1889,6 +2029,23 @@ def page_vue_globale():
                 f"{fmt_eur(kpis['total_value'])} / {fmt_eur(fire['fire_target'])}"
             ),
         )
+        # Date estimée d'atteinte
+        fire_date = compute_fire_date(
+            current_value = kpis["total_value"],
+            monthly_dca   = float(settings.get("monthly_dca") or 0),
+            annual_return = float(settings.get("estimated_annual_return") or 0.07),
+            fire_target   = fire["fire_target"],
+        )
+        if fire_date is not None:
+            delta_years  = (fire_date - pd.Timestamp.today()).days / 365.25
+            years_int    = int(delta_years)
+            months_int   = int((delta_years - years_int) * 12)
+            delta_str    = f"{years_int} an{'s' if years_int > 1 else ''}"
+            if months_int > 0:
+                delta_str += f" {months_int} mois"
+            st.caption(f"📅 Date estimée : **{fire_date.strftime('%B %Y')}** — dans {delta_str}")
+        elif kpis["total_value"] >= fire["fire_target"]:
+            st.success("🎉 Objectif FIRE atteint !")
     else:
         st.info("Objectif FIRE non défini — renseigne-le dans Saisie manuelle.")
 
@@ -2239,18 +2396,20 @@ def page_analyses():
         with col_info:
             st.caption(
                 f"DCA mensuel : **{fmt_eur(monthly_dca)}** · "
-                f"Rendement estimé : **{annual_return*100:.1f} %/an** · "
+                f"Rendement neutre : **{annual_return*100:.1f} %/an** · "
+                f"Scénarios : ±3 % · "
                 f"Inflation : **{inflation_rate*100:.1f} %/an**"
             )
 
-        # Calcul à partir de la situation actuelle (pas filtrée)
+        # Projection multi-scénarios (pessimiste / neutre / optimiste ±3 %)
         kpis_full = compute_kpis(df_snap)
-        fig_dca, theorique, reel, capital = compute_dca_projection(
+        fig_dca, theorique, reel, capital = compute_dca_projection_multi(
             current_value    = kpis_full["total_value"],
             current_invested = kpis_full["invested_capital"],
             monthly_dca      = monthly_dca,
             annual_return    = annual_return,
             inflation_rate   = inflation_rate,
+            fire_target      = fire_target,
             years            = years,
         )
 
@@ -2267,18 +2426,6 @@ def page_analyses():
         display_kpi_block(col3, "Capital total investi",       fmt_eur(capital_final))
         display_kpi_block(col4, "Gain généré par les intérêts",
                           fmt_eur(gain_total), gain_pct, is_percent=True)
-
-        # Ligne FIRE sur le graphique si target définie
-        if fire_target > 0:
-            fig_dca.add_hline(
-                y=fire_target,
-                line_dash="dash",
-                line_color="#2ECC71",
-                line_width=1.5,
-                annotation_text=f"  🎯 Objectif FIRE : {fmt_eur(fire_target)}",
-                annotation_position="top left",
-                annotation_font_color="#2ECC71",
-            )
 
         st.plotly_chart(fig_dca, use_container_width=True)
 
