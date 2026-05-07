@@ -32,8 +32,12 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "3.8"
+APP_VERSION = "3.9"
 PATCH_NOTES = {
+    "3.9": [
+        "Correction : compute_kpis() — guard ajouté si df_snap vide (retourne dict de zéros au lieu de crasher)",
+        "Correction : page Analyses — section dividendes utilisait fetch_snapshots_agg() redondant au lieu du df_snap déjà chargé",
+    ],
     "3.8": [
         "Refactor : render_positions_table() — tableau positions mutualisé (Vue Globale + Vue par compte)",
         "Suppression : ~55 lignes dupliquées (PRU, PV latente, Rend. div., formatage)",
@@ -431,7 +435,15 @@ def safe_value(x: float | None, default: float = 0.0) -> float:
 def compute_kpis(df_snap: pd.DataFrame) -> dict:
     """
     KPIs de base à partir des snapshots agrégés.
+    Retourne un dict de zéros si df_snap est vide (défense en profondeur).
     """
+    if df_snap.empty:
+        return {
+            "total_value":      0.0,
+            "invested_capital": 0.0,
+            "plus_value":       0.0,
+            "perf_pct":         0.0,
+        }
     latest           = df_snap.iloc[-1]
     total_value      = float(latest["total_value"])
     invested_capital = float(latest["invested_capital"])
@@ -2209,7 +2221,8 @@ def page_analyses():
         st.info("Aucun dividende enregistré. Saisis tes dividendes dans Saisie manuelle (type : Dividende).")
     else:
         # ── KPIs ────────────────────────────────────────────────
-        kpis_full   = compute_kpis(fetch_snapshots_agg())
+        # Calcul à partir de la situation actuelle (df_snap complet, non filtré)
+        kpis_full   = compute_kpis(df_snap)
         yield_ttm   = (
             div_data["ttm"] / kpis_full["total_value"] * 100
             if kpis_full["total_value"] > 0 else 0.0
