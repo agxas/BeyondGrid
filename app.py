@@ -32,8 +32,13 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "3.6"
+APP_VERSION = "3.7"
 PATCH_NOTES = {
+    "3.7": [
+        "Robustesse : toutes les fetch_*() Supabase protégées par try/except → RuntimeError propre",
+        "Robustesse : chaque page intercepte RuntimeError au chargement → st.error + st.stop() au lieu d'un crash",
+        "Comportement : si Supabase revient, le prochain rendu retente automatiquement (exception non mise en cache)",
+    ],
     "3.6": [
         "Perf : _build_perf_index() réduit de ×10 à ×3 par rendu (Vue Globale) et de ×3 à ×1 (Analyses)",
         "Refactor : compute_perf_over_period / compute_perf_value_over_period / compute_sparkline acceptent un perf_index pré-calculé",
@@ -253,10 +258,14 @@ def fetch_snapshots_agg() -> pd.DataFrame:
     Retourne un DataFrame avec colonnes :
       date | total_value | invested_capital
     Trié par date ASC.
+    Lève RuntimeError si Supabase est inaccessible.
     """
-    res = supabase.table("snapshots").select(
-        "date, total_value, invested_capital"
-    ).execute()
+    try:
+        res = supabase.table("snapshots").select(
+            "date, total_value, invested_capital"
+        ).execute()
+    except Exception as e:
+        raise RuntimeError(f"Impossible de charger les snapshots : {e}") from e
 
     if not res.data:
         return pd.DataFrame()
@@ -277,10 +286,14 @@ def fetch_snapshots_agg() -> pd.DataFrame:
 def fetch_snapshots_by_account() -> pd.DataFrame:
     """
     Snapshots bruts avec nom du compte (pour vue par compte).
+    Lève RuntimeError si Supabase est inaccessible.
     """
-    res = supabase.table("snapshots").select(
-        "date, total_value, invested_capital, account_id, accounts(name, type)"
-    ).execute()
+    try:
+        res = supabase.table("snapshots").select(
+            "date, total_value, invested_capital, account_id, accounts(name, type)"
+        ).execute()
+    except Exception as e:
+        raise RuntimeError(f"Impossible de charger les snapshots par compte : {e}") from e
 
     if not res.data:
         return pd.DataFrame()
@@ -298,8 +311,12 @@ def fetch_settings() -> dict:
     """
     Récupère le singleton settings (id = 1).
     Retourne un dict vide si pas encore configuré.
+    Lève RuntimeError si Supabase est inaccessible.
     """
-    res = supabase.table("settings").select("*").eq("id", 1).execute()
+    try:
+        res = supabase.table("settings").select("*").eq("id", 1).execute()
+    except Exception as e:
+        raise RuntimeError(f"Impossible de charger les paramètres : {e}") from e
     if res.data:
         return res.data[0]
     return {}
@@ -307,19 +324,31 @@ def fetch_settings() -> dict:
 
 @st.cache_data(ttl=600)
 def fetch_accounts() -> pd.DataFrame:
-    res = supabase.table("accounts").select("*").eq("is_active", True).execute()
+    """Lève RuntimeError si Supabase est inaccessible."""
+    try:
+        res = supabase.table("accounts").select("*").eq("is_active", True).execute()
+    except Exception as e:
+        raise RuntimeError(f"Impossible de charger les comptes : {e}") from e
     return pd.DataFrame(res.data) if res.data else pd.DataFrame()
 
 
 @st.cache_data(ttl=600)
 def fetch_assets() -> pd.DataFrame:
-    res = supabase.table("assets").select("*").execute()
+    """Lève RuntimeError si Supabase est inaccessible."""
+    try:
+        res = supabase.table("assets").select("*").execute()
+    except Exception as e:
+        raise RuntimeError(f"Impossible de charger les assets : {e}") from e
     return pd.DataFrame(res.data) if res.data else pd.DataFrame()
 
 
 @st.cache_data(ttl=600)
 def fetch_transactions() -> pd.DataFrame:
-    res = supabase.table("transactions").select("*").execute()
+    """Lève RuntimeError si Supabase est inaccessible."""
+    try:
+        res = supabase.table("transactions").select("*").execute()
+    except Exception as e:
+        raise RuntimeError(f"Impossible de charger les transactions : {e}") from e
     if not res.data:
         return pd.DataFrame()
     df = pd.DataFrame(res.data)
@@ -1530,12 +1559,16 @@ def compute_dividends(
 def page_vue_globale():
     st.title("📊 Synthèse du Patrimoine")
 
-    with st.spinner("Chargement des données..."):
-        df_snap     = fetch_snapshots_agg()
-        settings    = fetch_settings()
-        df_txn      = fetch_transactions()
-        df_assets   = fetch_assets()
-        df_snap_acc = fetch_snapshots_by_account()
+    try:
+        with st.spinner("Chargement des données..."):
+            df_snap     = fetch_snapshots_agg()
+            settings    = fetch_settings()
+            df_txn      = fetch_transactions()
+            df_assets   = fetch_assets()
+            df_snap_acc = fetch_snapshots_by_account()
+    except RuntimeError as e:
+        st.error(f"❌ Base de données inaccessible — {e}")
+        st.stop()
 
     if df_snap.empty:
         st.warning("Aucun snapshot disponible. Lance le script de snapshot pour commencer.")
@@ -1800,11 +1833,15 @@ def page_vue_globale():
 def page_analyses():
     st.title("📊 Analyses & Graphiques")
 
-    with st.spinner("Chargement des données..."):
-        df_snap   = fetch_snapshots_agg()
-        settings  = fetch_settings()
-        df_txn    = fetch_transactions()
-        df_assets = fetch_assets()
+    try:
+        with st.spinner("Chargement des données..."):
+            df_snap   = fetch_snapshots_agg()
+            settings  = fetch_settings()
+            df_txn    = fetch_transactions()
+            df_assets = fetch_assets()
+    except RuntimeError as e:
+        st.error(f"❌ Base de données inaccessible — {e}")
+        st.stop()
 
     if df_snap.empty:
         st.warning("Aucun snapshot disponible.")
@@ -2184,11 +2221,15 @@ def page_analyses():
 def page_compte():
     st.title("🏦 Vue par compte")
 
-    with st.spinner("Chargement des données..."):
-        df_accounts = fetch_accounts()
-        df_txn      = fetch_transactions()
-        df_assets   = fetch_assets()
-        df_snap_acc = fetch_snapshots_by_account()
+    try:
+        with st.spinner("Chargement des données..."):
+            df_accounts = fetch_accounts()
+            df_txn      = fetch_transactions()
+            df_assets   = fetch_assets()
+            df_snap_acc = fetch_snapshots_by_account()
+    except RuntimeError as e:
+        st.error(f"❌ Base de données inaccessible — {e}")
+        st.stop()
 
     if df_accounts.empty:
         st.warning("Aucun compte actif.")
@@ -2354,10 +2395,14 @@ def page_reequilibrage():
     st.title("⚖️ Rééquilibrage PEA")
 
     # ── Chargement des données ──────────────────────────────────
-    settings      = fetch_settings()
-    df_accounts   = fetch_accounts()
-    df_assets     = fetch_assets()
-    df_txn        = fetch_transactions()
+    try:
+        settings      = fetch_settings()
+        df_accounts   = fetch_accounts()
+        df_assets     = fetch_assets()
+        df_txn        = fetch_transactions()
+    except RuntimeError as e:
+        st.error(f"❌ Base de données inaccessible — {e}")
+        st.stop()
 
     dca_amount    = float(settings.get("monthly_dca") or 0)
 
@@ -2554,9 +2599,13 @@ def page_reequilibrage():
 def page_saisie():
     st.title("✍️ Saisie manuelle")
 
-    settings    = fetch_settings()
-    df_accounts = fetch_accounts()
-    df_assets   = fetch_assets()
+    try:
+        settings    = fetch_settings()
+        df_accounts = fetch_accounts()
+        df_assets   = fetch_assets()
+    except RuntimeError as e:
+        st.error(f"❌ Base de données inaccessible — {e}")
+        st.stop()
 
     tab_settings, tab_prix, tab_transaction = st.tabs([
         "⚙️ Paramètres",
@@ -2856,9 +2905,13 @@ def page_saisie():
 def page_transactions():
     st.title("🧾 Historique des transactions")
 
-    df_txn = fetch_transactions()
-    df_accounts = fetch_accounts()
-    df_assets = fetch_assets()
+    try:
+        df_txn      = fetch_transactions()
+        df_accounts = fetch_accounts()
+        df_assets   = fetch_assets()
+    except RuntimeError as e:
+        st.error(f"❌ Base de données inaccessible — {e}")
+        st.stop()
 
     if df_txn.empty:
         st.info("Aucune transaction enregistrée.")
