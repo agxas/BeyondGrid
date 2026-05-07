@@ -35,9 +35,9 @@ st.set_page_config(
 APP_VERSION = "4.0"
 PATCH_NOTES = {
     "4.0": [
-        "Nouveau : CAGR — rendement annualisé composé depuis le 1er snapshot (Vue Globale, Analyses, Vue par compte)",
+        "Nouveau : CAGR (rendement annualisé composé) — Vue Globale (4ème KPI perf) et Vue par compte",
         "Nouveau : Yield on Cost (YoC) — colonne dividendes TTM / capital investi dans le tableau positions",
-        "Nouveau : Plafond PEA (150k€) et Livret A (22 950€) — barre de progression (Vue par compte + Rééquilibrage)",
+        "Nouveau : Plafond PEA (150k€) — barre de progression (Vue par compte PEA + Rééquilibrage)",
         "Nouveau : Filtre par asset dans l'historique Transactions",
         "Nouveau : Alerte snapshot manquant globale — sidebar visible sur toutes les pages",
         "Nouveau : Titre de page dynamique selon l'onglet actif (onglet navigateur)",
@@ -1593,8 +1593,7 @@ def compute_accounts_evolution(df_snap_acc: pd.DataFrame) -> pd.DataFrame:
 # ============================================================
 
 # ── Constantes métier ─────────────────────────────────────
-PEA_PLAFOND      = 150_000   # € — plafond légal de versements PEA
-LIVRET_A_PLAFOND =  22_950   # € — plafond légal Livret A
+PEA_PLAFOND = 150_000   # € — plafond légal de versements PEA
 
 
 def _set_page_title(subtitle: str) -> None:
@@ -2055,16 +2054,6 @@ def page_analyses():
     # ── 4a : Sharpe & Volatilité ───────────────────────────────
     st.subheader("⚡ Risque & Performance")
 
-    # CAGR sur l'historique complet (indépendant du filtre de période)
-    cagr_global = compute_cagr(df_snap, perf_index=_perf_idx_full)
-    col_cagr, _ = st.columns([2, 5])
-    with col_cagr:
-        display_kpi(
-            "CAGR (rendement annualisé depuis le début)",
-            fmt_pct(cagr_global) if cagr_global is not None else "—",
-        )
-    st.divider()
-
     # FIX : seuil minimum pour des métriques fiables
     MIN_POINTS = 20
 
@@ -2416,7 +2405,7 @@ def page_compte():
     display_kpi_block(col4, "CAGR (depuis le début)",
                       fmt_pct(cagr_acc) if cagr_acc is not None else "—")
 
-    # ── Plafond légal (PEA / Livret A) ────────────────────────────
+    # ── Plafond légal PEA ─────────────────────────────────────
     if acc_type == "PEA" and invested_capital > 0:
         pea_pct = min(invested_capital / PEA_PLAFOND * 100, 100.0)
         color   = "🟢" if pea_pct < 75 else ("🟡" if pea_pct < 95 else "🔴")
@@ -2425,16 +2414,6 @@ def page_compte():
             text=(
                 f"{color} Plafond PEA : {fmt_eur(invested_capital)} versés "
                 f"/ {fmt_eur(PEA_PLAFOND)} ({pea_pct:.1f} %)"
-            ),
-        )
-    elif acc_type == "LIVRET" and invested_capital > 0:
-        la_pct  = min(invested_capital / LIVRET_A_PLAFOND * 100, 100.0)
-        color   = "🟢" if la_pct < 75 else ("🟡" if la_pct < 95 else "🔴")
-        st.progress(
-            la_pct / 100,
-            text=(
-                f"{color} Plafond Livret A : {fmt_eur(invested_capital)} "
-                f"/ {fmt_eur(LIVRET_A_PLAFOND)} ({la_pct:.1f} %)"
             ),
         )
 
