@@ -2043,7 +2043,12 @@ def page_vue_globale():
             delta_str    = f"{years_int} an{'s' if years_int > 1 else ''}"
             if months_int > 0:
                 delta_str += f" {months_int} mois"
-            st.caption(f"📅 Date estimée : **{fire_date.strftime('%B %Y')}** — dans {delta_str}")
+            _MOIS_FR = [
+                "", "janvier", "février", "mars", "avril", "mai", "juin",
+                "juillet", "août", "septembre", "octobre", "novembre", "décembre",
+            ]
+            mois_fr  = _MOIS_FR[fire_date.month]
+            st.caption(f"📅 Date estimée : **{mois_fr} {fire_date.year}** — dans {delta_str}")
         elif kpis["total_value"] >= fire["fire_target"]:
             st.success("🎉 Objectif FIRE atteint !")
     else:
