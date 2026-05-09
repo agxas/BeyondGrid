@@ -32,8 +32,13 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "4.1"
+APP_VERSION = "4.2"
 PATCH_NOTES = {
+    "4.2": [
+        "Nouveau : alerte drawdown sévère dans la sidebar — visible sur toutes les pages si le portefeuille chute de plus de 20 % depuis son plus haut",
+        "Amélioration FIRE : disclaimer sous la date estimée rappelant les hypothèses du calcul (rendement constant, DCA fixe, hors inflation)",
+        "Refactoring : suppression de compute_global_positions() — compute_positions_with_pru() unifié avec ajout de la géographie, utilisé pour tous les tableaux et graphiques d'allocation",
+    ],
     "4.1": [
         "Correctif : itertuples() + pré-indexation assets dans compute_positions_with_pru (fix annoncé en v4.0 mais non appliqué)",
         "Nouveau : Date estimée FIRE — calcul exact par formule de valeur future (Vue Globale, section FIRE)",
@@ -1566,42 +1571,6 @@ def render_positions_table(
         ]]
         st.dataframe(df_display, use_container_width=True, hide_index=True)
 
-def compute_global_positions(df_txn: pd.DataFrame, df_assets: pd.DataFrame) -> pd.DataFrame:
-    """
-    Reconstruit toutes les positions (tous comptes confondus)
-    """
-    df_txn = df_txn[
-        df_txn["asset_id"].notna() &
-        df_txn["type"].isin(["buy", "sell"])
-    ].copy()
-
-    if df_txn.empty:
-        return pd.DataFrame()
-    df_txn["signed_qty"] = df_txn["quantity"].fillna(0).astype(float)
-    df_txn.loc[df_txn["type"] == "sell", "signed_qty"] *= -1
-
-    df_pos = (
-        df_txn.groupby("asset_id")["signed_qty"]
-        .sum()
-        .reset_index()
-        .rename(columns={"signed_qty": "quantity"})
-    )
-    df_pos = df_pos[df_pos["quantity"] > 1e-9]
-
-    if df_pos.empty:
-        return pd.DataFrame()
-
-    df_pos = df_pos.merge(
-        df_assets[["id", "name", "asset_class", "geography", "last_known_price"]],
-        left_on="asset_id",
-        right_on="id",
-        how="left"
-    ).drop(columns=["id"])
-
-    df_pos["last_known_price"] = df_pos["last_known_price"].astype(float)
-    df_pos["value"] = df_pos["quantity"] * df_pos["last_known_price"]
-
-    return df_pos.reset_index(drop=True)
 
 @st.cache_data
 def compute_positions_with_pru(
@@ -1662,6 +1631,7 @@ def compute_positions_with_pru(
         asset_row     = asset_index.loc[asset_id]
         name          = asset_row["name"]
         asset_class   = asset_row["asset_class"]
+        geography     = asset_row.get("geography")
         current_price = float(asset_row["last_known_price"] or 0)
         value         = qty_held * current_price
         invested      = qty_held * pru
@@ -1672,6 +1642,7 @@ def compute_positions_with_pru(
             "asset_id":          int(asset_id),
             "name":              name,
             "asset_class":       asset_class or "Autre",
+            "geography":         geography,
             "quantity":          round(qty_held, 4),
             "pru":               round(pru, 4),
             "last_known_price":  round(current_price, 4),
@@ -2063,6 +2034,12 @@ def page_vue_globale():
             ]
             mois_fr  = _MOIS_FR[fire_date.month]
             st.caption(f"📅 Date estimée : **{mois_fr} {fire_date.year}** — dans {delta_str}")
+            _ret_pct = float(settings.get("estimated_annual_return") or 0.07) * 100
+            _dca_eur = float(settings.get("monthly_dca") or 0)
+            st.caption(
+                f"ℹ️ Projection indicative — hypothèses : rendement annuel constant à {_ret_pct:.1f} %, "
+                f"DCA mensuel de {fmt_eur(_dca_eur)}, hors inflation et aléas de marché."
+            )
         elif kpis["total_value"] >= fire["fire_target"]:
             st.success("🎉 Objectif FIRE atteint !")
     else:
@@ -2108,7 +2085,7 @@ def page_vue_globale():
         )
 
     with tab_alloc:
-        df_positions_global = compute_global_positions(df_txn, df_assets)
+        df_positions_global = compute_positions_with_pru(df_txn, df_assets)
         if not df_positions_global.empty:
             col1, col2 = st.columns(2)
             render_allocation_charts(df_positions_global, col1, col2)
@@ -2623,7 +2600,7 @@ def page_compte():
         )
 
     with tab_alloc:
-        df_pos_alloc = compute_global_positions(df_txn_acc, df_assets)
+        df_pos_alloc = compute_positions_with_pru(df_txn_acc, df_assets)
         if not df_pos_alloc.empty:
             col_a, col_b = st.columns(2)
             render_allocation_charts(df_pos_alloc, col_a, col_b)
@@ -3433,6 +3410,10 @@ try:
             f"⚠️ Snapshot : **{_nb_days}j ouvrés** sans mise à jour — "
             "vérifie GitHub Actions."
         )
+    if len(_df_snap_check) >= 2:
+        _, _max_dd = compute_drawdown(_df_snap_check)
+        if _max_dd < -20:
+            st.sidebar.error(f"📉 Drawdown sévère : **{_max_dd:.1f} %** depuis le plus haut")
 except RuntimeError:
     st.sidebar.error("❌ Supabase inaccessible")
 
