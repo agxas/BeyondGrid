@@ -2977,10 +2977,13 @@ Sois factuel, bienveillant et concis. Pas de bullet points, du texte fluide."""
                         st.session_state[cache_key] = result
                         st.rerun()
                     except requests.exceptions.HTTPError as e:
-                        if e.response.status_code == 400:
+                        code = e.response.status_code
+                        if code == 400:
                             st.error("❌ Clé API invalide — vérifie ta clé dans les paramètres.")
+                        elif code == 429:
+                            st.warning("⏳ Quota Gemini atteint — attends 1 minute et réessaie. (Free tier : 15 requêtes/min)")
                         else:
-                            st.error(f"❌ Erreur API Gemini ({e.response.status_code}) — réessaie dans quelques instants.")
+                            st.error(f"❌ Erreur API Gemini ({code}) — réessaie dans quelques instants.")
                     except requests.exceptions.Timeout:
                         st.error("❌ Timeout — Gemini n'a pas répondu à temps. Réessaie.")
                     except Exception as e:
