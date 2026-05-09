@@ -38,6 +38,7 @@ PATCH_NOTES = {
         "Correctif : itertuples() + pré-indexation assets dans compute_positions_with_pru (fix annoncé en v4.0 mais non appliqué)",
         "Nouveau : Date estimée FIRE — calcul exact par formule de valeur future (Vue Globale, section FIRE)",
         "Nouveau : Projection DCA multi-scénarios — pessimiste/neutre/optimiste ±3 % sur un même graphique (Analyses)",
+        "Correctif UI : suppression du signe + redondant sur les deltas positifs (la flèche ↑ suffit à indiquer la direction) — affecte tous les KPIs (plus-value, performance, alpha, etc.)",
     ],
     "4.0": [
         "Nouveau : CAGR (rendement annualisé composé) — Vue Globale (4ème KPI perf) et Vue par compte",
