@@ -3503,13 +3503,14 @@ def page_saisie():
                         acc_type_map[tr_type] = chosen
 
                     # Build existing transactions key set for duplicate detection
-                    # Key: YYYY-MM-DD_asset_id_total_amount
+                    # Key: YYYY-MM-DD_asset_id — le montant n'est pas fiable si
+                    # la transaction a été saisie manuellement avec une quantité arrondie.
                     existing_keys: set[str] = set()
                     if not df_txn.empty:
                         for _, txrow in df_txn.iterrows():
                             if txrow.get("asset_id") is not None and not pd.isna(txrow.get("asset_id")):
                                 date_part = pd.to_datetime(txrow["date"]).strftime("%Y-%m-%d")
-                                key = f"{date_part}_{int(txrow['asset_id'])}_{round(float(txrow['total_amount']), 2)}"
+                                key = f"{date_part}_{int(txrow['asset_id'])}"
                                 existing_keys.add(key)
 
                     # Parse each BUY row
@@ -3536,7 +3537,7 @@ def page_saisie():
                         except (ValueError, TypeError):
                             qty = unit_price = total_amt = fee_amt = 0.0
 
-                        dup_key = f"{date_str}_{asset_info['id'] if asset_info else '?'}_{total_amt}"
+                        dup_key = f"{date_str}_{asset_info['id'] if asset_info else '?'}"
                         is_dup  = asset_info is not None and dup_key in existing_keys
 
                         status = (
