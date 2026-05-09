@@ -40,6 +40,9 @@ PATCH_NOTES = {
         "Nouveau : Projection DCA multi-scénarios — pessimiste/neutre/optimiste ±3 % sur un même graphique (Analyses)",
         "Correctif UI : suppression du signe + redondant sur les deltas positifs (la flèche ↑ suffit à indiquer la direction) — affecte tous les KPIs (plus-value, performance, alpha, etc.)",
         "Correctif calcul : Sharpe ratio — taux sans risque (Livret A) ramené à 365 jours calendaires au lieu de 252 jours de bourse, annualisation corrigée en conséquence",
+        "Nouveau : suppression de transaction depuis la page Historique (expander avec confirmation, irréversible)",
+        "Nouveau : alerte snapshot périmé sur la page Saisie manuelle — avertissement si > 2 jours ouvrés sans mise à jour",
+        "Nouveau : signalement des assets à prix 0 € dans le tableau des positions (avertissement global + indicateur ⚠️ dans la colonne Prix actuel)",
     ],
     "4.0": [
         "Nouveau : CAGR (rendement annualisé composé) — Vue Globale (4ème KPI perf) et Vue par compte",
@@ -1519,6 +1522,13 @@ def render_positions_table(
                       pv_pct, is_percent=True)
     display_kpi_block(col3, label_capital,            fmt_eur(total_inv_pos))
 
+    zero_price = df_pos[df_pos["last_known_price"] == 0]["name"].tolist()
+    if zero_price:
+        st.warning(
+            f"⚠️ Prix manquant (0 €) pour : **{', '.join(zero_price)}** "
+            "— valeur et performance inexactes pour ces positions."
+        )
+
     with st.expander("Voir le tableau détaillé"):
         df_display = df_pos.copy()
 
@@ -1537,7 +1547,9 @@ def render_positions_table(
         )
 
         df_display["PRU"]         = df_display["pru"].map(lambda x: f"{x:.2f} €")
-        df_display["Prix actuel"] = df_display["last_known_price"].map(lambda x: f"{x:.2f} €")
+        df_display["Prix actuel"] = df_display["last_known_price"].map(
+            lambda x: f"⚠️ {x:.2f} €" if x == 0 else f"{x:.2f} €"
+        )
         df_display["Valeur"]      = df_display["value"].map(fmt_eur)
         df_display["Investi"]     = df_display["invested"].map(fmt_eur)
         df_display["PV latente"]  = df_display["pv_latente"].map(
@@ -2882,6 +2894,16 @@ def page_saisie():
         st.error(f"❌ Base de données inaccessible — {e}")
         st.stop()
 
+    try:
+        _nb_days, _is_stale = check_data_freshness(fetch_snapshots_agg())
+        if _is_stale:
+            st.warning(
+                f"⚠️ Dernier snapshot vieux de **{_nb_days} jours ouvrés** — "
+                "pensez à enregistrer un snapshot après avoir saisi vos transactions."
+            )
+    except RuntimeError:
+        pass
+
     tab_settings, tab_prix, tab_transaction = st.tabs([
         "⚙️ Paramètres",
         "💲 Prix manuels",
@@ -3339,6 +3361,45 @@ def page_transactions():
         mime="text/csv",
         use_container_width=True,
     )
+
+    st.divider()
+
+    with st.expander("🗑️ Supprimer une transaction"):
+        if df_filtered.empty:
+            st.info("Aucune transaction dans la sélection actuelle.")
+        else:
+            txn_options = {}
+            for _, row in df_filtered.iterrows():
+                asset_name = asset_map.get(row.get("asset_id"), "—") if pd.notna(row.get("asset_id")) else "—"
+                acct_name  = account_map.get(row.get("account_id"), "—")
+                label = (
+                    f"{row['date'].strftime('%d/%m/%Y')} | {row['type']} | "
+                    f"{asset_name} | {fmt_eur(abs(float(row['total_amount'])))} | {acct_name}"
+                )
+                txn_options[label] = int(row["id"])
+
+            selected_label = st.selectbox(
+                "Choisir la transaction à supprimer",
+                options=list(txn_options.keys()),
+                key="delete_txn_select",
+            )
+            selected_id = txn_options[selected_label]
+
+            if st.button("🗑️ Supprimer", type="secondary", key="delete_txn_btn"):
+                st.session_state["delete_txn_confirm"] = selected_id
+
+            if st.session_state.get("delete_txn_confirm") == selected_id:
+                st.warning("⚠️ Cette suppression est **irréversible**. Confirmer ?")
+                c1, c2 = st.columns(2)
+                if c1.button("✅ Confirmer la suppression", type="primary", key="delete_confirm_yes"):
+                    supabase.table("transactions").delete().eq("id", selected_id).execute()
+                    fetch_transactions.clear()
+                    st.session_state.pop("delete_txn_confirm", None)
+                    st.success("Transaction supprimée.")
+                    st.rerun()
+                if c2.button("Annuler", key="delete_confirm_no"):
+                    st.session_state.pop("delete_txn_confirm", None)
+                    st.rerun()
 
 
 
