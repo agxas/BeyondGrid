@@ -231,9 +231,9 @@ def display_kpi(
     delta_display = None
     if delta is not None:
         if is_percent:
-            delta_display = f"{delta:+.2f}%"
+            delta_display = f"{delta:.2f}%"
         else:
-            delta_display = f"{delta:+,.0f} €".replace(",", " ")
+            delta_display = f"{delta:,.0f} €".replace(",", " ")
 
     st.metric(
         label=label,
