@@ -1,6 +1,6 @@
-# 📊 BeyondGrid — v3.1
+# 📊 BeyondGrid — v4.5
 
-> Dashboard de suivi de portefeuille financier multi-comptes, avec performances ajustées des apports et suivi FIRE.
+> Dashboard de suivi de portefeuille financier multi-comptes, avec performances ajustées des apports, suivi FIRE et analyse IA mensuelle.
 
 ---
 
@@ -12,6 +12,7 @@
 - 📉 Performances **nettes des apports** (méthode TWR-like — un DCA ne gonfle pas artificiellement les chiffres)
 - 🎯 Suivi de l'objectif FIRE avec règle des 4 %
 - ⚖️ Rééquilibrage PEA assisté avec calcul des ordres Trade Republic
+- 📅 Synthèse mensuelle avec analyse IA personnalisée (Gemini 1.5 Flash — gratuit)
 - 🔄 Snapshots journaliers automatisés via GitHub Actions
 
 **Stack :**
@@ -22,6 +23,7 @@
 | Base de données | Supabase (PostgreSQL) |
 | Automatisation | GitHub Actions |
 | Données de marché | yfinance |
+| Analyse IA | Google Gemini 1.5 Flash (API gratuite) |
 
 ---
 
@@ -54,7 +56,7 @@ Le projet repose sur une logique **transaction-driven + snapshots journaliers**.
 | `assets` | Actifs financiers (ETF, actions, fonds, crypto…) |
 | `transactions` | Source de vérité — buy, sell, dividend, fee |
 | `snapshots` | Valeurs journalières par compte (total_value, invested_capital) |
-| `settings` | Configuration globale (FIRE, DCA, rendement estimé, inflation) |
+| `settings` | Configuration globale (FIRE, DCA, rendement estimé, inflation, clé API Gemini) |
 
 ### Modèle de données clé
 
@@ -118,36 +120,53 @@ Les assets avec `auto_price = FALSE` ont leur prix mis à jour manuellement depu
 
 ## 📊 Fonctionnalités
 
-### Vue Globale
+### 🏠 Vue Globale
 - Situation du jour : valeur totale, capital investi, plus-value latente, variation journalière
-- Performances récentes 1M / 3M / 1A avec sparklines (nettes des apports)
+- Performances récentes 1M / 3M / 1A / CAGR (nettes des apports)
 - Évolution du patrimoine global et par compte (graphiques interactifs)
-- Objectif FIRE : progression, revenu passif (règle des 4 %), jours de liberté financière
-- Positions ouvertes avec PRU, plus-value latente par ligne
+- Objectif FIRE : progression, date estimée, revenu passif (règle des 4 %), jours de liberté financière
+- Positions ouvertes avec PRU, plus-value latente et rendement dividendes par ligne
 - Répartition par classe d'actifs et géographie
+- Alerte drawdown sévère (sidebar, visible sur toutes les pages)
 
-### Analyses & Graphiques
+### 📊 Analyses & Graphiques
 - Performances par année calendaire (YTD inclus)
-- Ratio de Sharpe et volatilité annualisée (ajustés des apports)
+- Ratio de Sharpe et volatilité annualisée (ajustés des apports, taux sans risque = Livret A)
 - Drawdown depuis le plus haut historique
 - Comparaison portefeuille vs Livret A
 - Comparaison portefeuille vs benchmark (MSCI World, S&P 500…)
-- Projection DCA sur horizon configurable avec valeur réelle (inflation déduite)
+- Projection DCA multi-scénarios (pessimiste / neutre / optimiste) avec valeur réelle (inflation déduite)
+- Analyse des dividendes par asset et par année
 
-### Rééquilibrage PEA
+### 📅 Synthèse mensuelle
+- Sélecteur de mois (12 derniers mois disponibles)
+- Évolution de la valeur : début/fin de mois, variation € et %
+- Tableau des transactions du mois + barre de progression DCA vs objectif
+- Dividendes reçus dans le mois (total + détail par asset)
+- **Analyse IA** : analyse personnalisée en français via Gemini 1.5 Flash (gratuit) — performance, discipline DCA, dividendes, trajectoire FIRE
+
+### 🏦 Vue par compte
+- KPIs par enveloppe : valeur, capital investi, plus-value, CAGR
+- Barre de progression du plafond PEA (150 k€)
+- Graphique d'évolution avec sélecteur de période
+- Onglets : Positions / Allocation / Dividendes
+
+### ⚖️ Rééquilibrage PEA
 - Visualisation de l'allocation actuelle vs cible
+- Formulaire de saisie des cibles (persisté en base)
 - Calcul automatique des ordres à passer (algorithme greedy)
 - Format adapté Trade Republic (arrondi au multiple de 5 €)
 
-### Saisie manuelle
-- Paramètres globaux (FIRE, DCA, rendement estimé, inflation, Livret A)
+### ✍️ Saisie manuelle
+- Paramètres globaux : FIRE, DCA, rendement estimé, inflation, Livret A
+- Clé API Gemini pour l'analyse IA mensuelle (champ sécurisé)
 - Mise à jour des prix manuels avec liens vers les pages de cours
 - Saisie de nouvelles transactions avec aperçu du montant en temps réel
 
-### Transactions
-- Historique filtrable par compte, type et période
+### 🧾 Transactions
+- Historique filtrable par compte, type, asset et période
 - Résumé des flux (achats, ventes, dividendes, frais)
-- Export CSV
+- Suppression de transaction avec confirmation
 
 ---
 
@@ -166,12 +185,16 @@ Cela garantit qu'un DCA de 500 € un lundi n'apparaît pas comme un gain de 500
 
 ---
 
-## 🎯 Roadmap
+## 🤖 Analyse IA mensuelle
 
-- [ ] Correction fiscale (plus-values réalisées, abattements PEA)
-- [ ] Vue détaillée par compte
-- [ ] Alertes (objectif FIRE atteint, rebalancement nécessaire…)
-- [ ] Support multi-devises
+La page **Synthèse mensuelle** intègre une analyse générée par **Gemini 1.5 Flash** (Google).
+
+**Activation :**
+1. Créer une clé gratuite sur [aistudio.google.com](https://aistudio.google.com) (sans CB)
+2. La coller dans **Saisie manuelle → ⚙️ Paramètres → Clé API Gemini**
+3. Cliquer "✨ Générer l'analyse" dans la Synthèse mensuelle
+
+L'analyse est générée **à la demande** (pas d'appel automatique) et mise en cache pour la session.
 
 ---
 
