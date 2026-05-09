@@ -33,8 +33,11 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "4.6"
+APP_VERSION = "5.0"
 PATCH_NOTES = {
+    "5.0": [
+        "Nouveau : Import CSV Trade Republic — onglet 'Import TR' dans Saisie manuelle, filtre automatique des achats (TRADING/BUY), correspondance ISIN → asset, détection des doublons, aperçu avant import",
+    ],
     "4.6": [
         "Amélioration Analyse IA : prompt enrichi avec la liste complète des actifs détenus (nom, classe, géographie) et les opérations du mois — Gemini contextualise les perfs avec sa connaissance des marchés",
         "Correctif : modèle Gemini mis à jour → gemini-2.5-flash (seul modèle disponible gratuitement dans AI Studio)",
@@ -3038,6 +3041,7 @@ def page_saisie():
         settings    = fetch_settings()
         df_accounts = fetch_accounts()
         df_assets   = fetch_assets()
+        df_txn      = fetch_transactions()
     except RuntimeError as e:
         st.error(f"❌ Base de données inaccessible — {e}")
         st.stop()
@@ -3052,10 +3056,11 @@ def page_saisie():
     except RuntimeError:
         pass
 
-    tab_settings, tab_prix, tab_transaction = st.tabs([
+    tab_settings, tab_prix, tab_transaction, tab_import = st.tabs([
         "⚙️ Paramètres",
         "💲 Prix manuels",
         "➕ Nouvelle transaction",
+        "📥 Import TR",
     ])
 
     # ══════════════════════════════════════════════════════════
@@ -3418,6 +3423,215 @@ def page_saisie():
                     )
                 except Exception as e:
                     st.error(f"❌ Erreur lors de l'insertion : {e}")
+
+    # ══════════════════════════════════════════════════════════
+    # ONGLET 4 — IMPORT TRADE REPUBLIC CSV
+    # ══════════════════════════════════════════════════════════
+    with tab_import:
+        st.subheader("📥 Import CSV Trade Republic")
+        st.caption(
+            "Importe les achats depuis l'export CSV de Trade Republic. "
+            "Seules les lignes `category=TRADING / type=BUY` sont traitées — "
+            "les virements, intérêts et paiements carte sont ignorés."
+        )
+
+        uploaded = st.file_uploader(
+            "Fichier CSV Trade Republic",
+            type=["csv"],
+            key="tr_csv_upload",
+            label_visibility="collapsed",
+        )
+
+        if uploaded is not None:
+            try:
+                df_csv = pd.read_csv(uploaded, dtype=str)
+            except Exception as e:
+                st.error(f"❌ Impossible de lire le fichier : {e}")
+                df_csv = pd.DataFrame()
+
+            if not df_csv.empty:
+                # Filter only BUY trading rows
+                mask = (
+                    df_csv.get("category", pd.Series(dtype=str)).str.upper() == "TRADING"
+                ) & (
+                    df_csv.get("type", pd.Series(dtype=str)).str.upper() == "BUY"
+                )
+                df_buys = df_csv[mask].copy()
+
+                if df_buys.empty:
+                    st.info("Aucune ligne d'achat (TRADING/BUY) trouvée dans ce fichier.")
+                else:
+                    # Build ISIN → asset_id lookup
+                    isin_to_asset = {}
+                    if not df_assets.empty and "isin" in df_assets.columns:
+                        for _, arow in df_assets.iterrows():
+                            if arow.get("isin"):
+                                isin_to_asset[arow["isin"].strip()] = {
+                                    "id":   int(arow["id"]),
+                                    "name": arow["name"],
+                                }
+
+                    # Account mapping selectors
+                    tr_account_types = df_buys["account_type"].dropna().str.upper().unique().tolist()
+                    acc_options      = df_accounts["id"].tolist() if not df_accounts.empty else []
+                    acc_labels       = {row["id"]: row["name"] for _, row in df_accounts.iterrows()} if not df_accounts.empty else {}
+
+                    st.markdown("**Correspondance des comptes TR → BeyondGrid**")
+                    mapping_cols = st.columns(len(tr_account_types)) if tr_account_types else []
+                    acc_type_map: dict[str, int] = {}
+
+                    # Default guesses: PEA → first PEA account, DEFAULT → first non-PEA account
+                    def _guess_account(tr_type: str) -> int | None:
+                        for _, arow in df_accounts.iterrows():
+                            atype = (arow.get("type") or "").upper()
+                            if tr_type == "PEA" and atype == "PEA":
+                                return int(arow["id"])
+                            if tr_type == "DEFAULT" and atype not in ("PEA",):
+                                return int(arow["id"])
+                        return acc_options[0] if acc_options else None
+
+                    for col, tr_type in zip(mapping_cols, tr_account_types):
+                        guess = _guess_account(tr_type)
+                        default_idx = acc_options.index(guess) if guess in acc_options else 0
+                        chosen = col.selectbox(
+                            f"TR **{tr_type}** →",
+                            options=acc_options,
+                            index=default_idx,
+                            format_func=lambda x: acc_labels.get(x, str(x)),
+                            key=f"tr_acc_map_{tr_type}",
+                        )
+                        acc_type_map[tr_type] = chosen
+
+                    # Build existing transactions key set for duplicate detection
+                    # Key: YYYY-MM-DD_asset_id_total_amount
+                    existing_keys: set[str] = set()
+                    if not df_txn.empty:
+                        for _, txrow in df_txn.iterrows():
+                            if txrow.get("asset_id") is not None and not pd.isna(txrow.get("asset_id")):
+                                date_part = pd.to_datetime(txrow["date"]).strftime("%Y-%m-%d")
+                                key = f"{date_part}_{int(txrow['asset_id'])}_{round(float(txrow['total_amount']), 2)}"
+                                existing_keys.add(key)
+
+                    # Parse each BUY row
+                    rows_preview = []
+                    for _, r in df_buys.iterrows():
+                        isin       = (r.get("symbol") or "").strip()
+                        acc_type   = (r.get("account_type") or "DEFAULT").upper()
+                        date_str   = (r.get("date") or "").strip()
+                        shares_str = (r.get("shares") or "0").strip()
+                        price_str  = (r.get("price") or "0").strip()
+                        amount_str = (r.get("amount") or "0").strip()
+                        fee_str    = (r.get("fee") or "0").strip()
+                        tr_id      = (r.get("transaction_id") or "").strip()
+                        name_tr    = (r.get("name") or "").strip()
+
+                        asset_info = isin_to_asset.get(isin)
+                        account_id = acc_type_map.get(acc_type)
+
+                        try:
+                            qty        = round(float(shares_str), 8)
+                            unit_price = round(float(price_str), 6)
+                            total_amt  = round(float(amount_str), 2)
+                            fee_amt    = round(float(fee_str), 2) if fee_str else 0.0
+                        except (ValueError, TypeError):
+                            qty = unit_price = total_amt = fee_amt = 0.0
+
+                        dup_key = f"{date_str}_{asset_info['id'] if asset_info else '?'}_{total_amt}"
+                        is_dup  = asset_info is not None and dup_key in existing_keys
+
+                        status = (
+                            "⚠️ ISIN inconnu"   if asset_info is None else
+                            "⚠️ Compte inconnu" if account_id is None else
+                            "🔁 Déjà importé"   if is_dup else
+                            "✅ Prêt"
+                        )
+
+                        rows_preview.append({
+                            "status":     status,
+                            "date":       date_str,
+                            "isin":       isin,
+                            "asset":      asset_info["name"] if asset_info else name_tr or isin,
+                            "compte":     acc_type,
+                            "qté":        qty,
+                            "prix (€)":   unit_price,
+                            "montant (€)": total_amt,
+                            "_asset_id":  asset_info["id"] if asset_info else None,
+                            "_account_id": account_id,
+                            "_fee":       fee_amt,
+                            "_tr_id":     tr_id,
+                            "_is_dup":    is_dup,
+                            "_ready":     asset_info is not None and account_id is not None and not is_dup,
+                        })
+
+                    df_preview = pd.DataFrame(rows_preview)
+
+                    # Summary counts
+                    n_ready   = df_preview["_ready"].sum()
+                    n_dup     = df_preview["_is_dup"].sum()
+                    n_no_isin = (df_preview["status"] == "⚠️ ISIN inconnu").sum()
+                    n_total   = len(df_preview)
+
+                    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+                    col_s1.metric("Total achats", n_total)
+                    col_s2.metric("✅ Prêts", n_ready)
+                    col_s3.metric("🔁 Déjà importés", int(n_dup))
+                    col_s4.metric("⚠️ ISIN inconnus", int(n_no_isin))
+
+                    st.divider()
+
+                    # Preview table (display columns only)
+                    display_cols = ["status", "date", "asset", "compte", "qté", "prix (€)", "montant (€)"]
+                    st.dataframe(
+                        df_preview[display_cols],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+                    # Unmatched ISINs expander
+                    unmatched = df_preview[df_preview["status"] == "⚠️ ISIN inconnu"][["date", "isin", "asset", "compte"]].drop_duplicates()
+                    if not unmatched.empty:
+                        with st.expander(f"⚠️ {len(unmatched)} ISIN(s) non reconnu(s) — à créer manuellement dans Assets"):
+                            st.dataframe(unmatched, use_container_width=True, hide_index=True)
+
+                    # Import button
+                    st.divider()
+                    if n_ready == 0:
+                        st.info("Aucune transaction à importer (tout est déjà importé ou les assets sont inconnus).")
+                    else:
+                        if st.button(
+                            f"📥 Importer {n_ready} transaction(s)",
+                            use_container_width=True,
+                            type="primary",
+                            key="tr_import_btn",
+                        ):
+                            rows_to_insert = df_preview[df_preview["_ready"] == True]
+                            inserted = 0
+                            errors_import = []
+                            for _, imp in rows_to_insert.iterrows():
+                                try:
+                                    comment = f"TR:{imp['_tr_id']}" if imp["_tr_id"] else "Import TR"
+                                    supabase.table("transactions").insert({
+                                        "date":         imp["date"],
+                                        "type":         "buy",
+                                        "account_id":   int(imp["_account_id"]),
+                                        "asset_id":     int(imp["_asset_id"]),
+                                        "quantity":     float(imp["qté"]),
+                                        "unit_price":   float(imp["prix (€)"]),
+                                        "fees":         float(imp["_fee"]) if imp["_fee"] else 0.0,
+                                        "total_amount": float(imp["montant (€)"]),
+                                        "comment":      comment,
+                                    }).execute()
+                                    inserted += 1
+                                except Exception as exc:
+                                    errors_import.append(f"{imp['date']} {imp['asset']} : {exc}")
+
+                            fetch_transactions.clear()
+                            if inserted:
+                                st.success(f"✅ {inserted} transaction(s) importée(s) avec succès.")
+                            if errors_import:
+                                for err in errors_import:
+                                    st.error(f"❌ {err}")
+
 
 def page_transactions():
     st.title("🧾 Historique des transactions")
