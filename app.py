@@ -12,6 +12,7 @@
 import math
 import os
 import json
+import requests
 
 import streamlit as st
 import pandas as pd
@@ -36,7 +37,8 @@ APP_VERSION = "4.5"
 PATCH_NOTES = {
     "4.5": [
         "Nouveau : page Synthèse mensuelle — sélecteur de mois, évolution de la valeur (début/fin/variation), transactions du mois avec barre de progression DCA, dividendes reçus",
-        "Nouveau : placeholder Analyse IA — section prête à accueillir une analyse Claude dès qu'une clé API sera configurée",
+        "Nouveau : Analyse IA mensuelle via Gemini 1.5 Flash (gratuit) — bouton 'Générer l'analyse' avec résumé personnalisé en français (performance, DCA, dividendes, trajectoire FIRE)",
+        "Nouveau : champ clé API Gemini dans Saisie manuelle → Paramètres — stockée en base, masquée, résultat mis en cache par session",
     ],
     "4.4": [
         "Refactoring : page_compte() découpée en 3 sous-fonctions (_pc_render_kpis, _pc_render_evolution, _pc_render_details) avec séparateurs visuels",
@@ -1691,6 +1693,20 @@ def compute_accounts_evolution(df_snap_acc: pd.DataFrame) -> pd.DataFrame:
 # 4. PAGES
 # ============================================================
 
+def _call_gemini(api_key: str, prompt: str) -> str:
+    """Appel à l'API Gemini 1.5 Flash. Lève une exception en cas d'erreur."""
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta"
+        f"/models/gemini-1.5-flash-latest:generateContent?key={api_key}"
+    )
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 1024},
+    }
+    resp = requests.post(url, json=payload, timeout=30)
+    resp.raise_for_status()
+    return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+
 # ── Constantes métier ─────────────────────────────────────
 PEA_PLAFOND = 150_000   # € — plafond légal de versements PEA
 
@@ -2894,12 +2910,81 @@ def page_synthese_mensuelle():
     # ── Analyse IA ────────────────────────────────────────────
     st.divider()
     st.subheader("🤖 Analyse IA")
-    st.info(
-        "**Fonctionnalité à venir** — Configure une clé API Anthropic dans les paramètres "
-        "pour obtenir une analyse personnalisée de ton mois : points forts, points de "
-        "vigilance et cohérence avec ta stratégie FIRE.",
-        icon="🔑",
-    )
+
+    gemini_key = settings.get("gemini_api_key") or ""
+
+    if not gemini_key:
+        st.info(
+            "Configure ta clé API Gemini dans **Saisie manuelle → Paramètres** "
+            "pour activer l'analyse mensuelle IA. C'est gratuit sur "
+            "[aistudio.google.com](https://aistudio.google.com).",
+            icon="🔑",
+        )
+    else:
+        cache_key = f"gemini_{selected.strftime('%Y-%m')}"
+
+        if cache_key not in st.session_state:
+            st.session_state[cache_key] = None
+
+        if st.session_state[cache_key]:
+            st.markdown(st.session_state[cache_key])
+            if st.button("🔄 Régénérer l'analyse", key="regen_gemini"):
+                st.session_state[cache_key] = None
+                st.rerun()
+        else:
+            if st.button("✨ Générer l'analyse IA", key="gen_gemini", type="primary"):
+                # Construire le contexte du mois
+                mois_label = f"{MOIS_FR[selected.month]} {selected.year}"
+                fire_target_val = float(settings.get("fire_target_amount") or 0)
+                fire_pct_str    = ""
+                if fire_target_val > 0 and val_end:
+                    fire_pct = val_end / fire_target_val * 100
+                    fire_pct_str = f"\n- Progression FIRE : {fire_pct:.1f} % de l'objectif ({fmt_eur(fire_target_val)})"
+
+                dca_target_val  = float(settings.get("monthly_dca") or 0)
+                dca_context     = (
+                    f"{fmt_eur(invested_month)} investis / objectif {fmt_eur(dca_target_val)} "
+                    f"({invested_month / dca_target_val * 100:.0f} %)"
+                    if dca_target_val > 0 else "DCA non configuré"
+                )
+                div_context = (
+                    f"{fmt_eur(float(df_div_month['total_amount'].sum()))} "
+                    f"({len(df_div_month)} versement(s))"
+                    if not df_div_month.empty else "Aucun"
+                )
+
+                prompt = f"""Tu es un assistant spécialisé en investissement personnel pour un investisseur français.
+Voici les données du portefeuille pour {mois_label} :
+
+- Valeur début de mois : {fmt_eur(val_start) if val_start else 'inconnue'}
+- Valeur fin de mois : {fmt_eur(val_end)}
+- Variation : {fmt_eur(variation_eur) if variation_eur is not None else 'inconnue'} ({f'{variation_pct:+.2f} %' if variation_pct is not None else 'inconnue'})
+- Transactions ce mois : {len(df_txn_month)} opération(s)
+- DCA mensuel : {dca_context}
+- Dividendes reçus : {div_context}{fire_pct_str}
+
+Rédige une analyse concise et personnalisée en français (3-4 courts paragraphes). Commente :
+1. La performance du mois (bon/mauvais mois ? contexte ?)
+2. La discipline d'investissement (respect du DCA ?)
+3. Les dividendes si pertinent
+4. Un mot sur la trajectoire FIRE si les données sont disponibles
+
+Sois factuel, bienveillant et concis. Pas de bullet points, du texte fluide."""
+
+                with st.spinner("Analyse en cours..."):
+                    try:
+                        result = _call_gemini(gemini_key, prompt)
+                        st.session_state[cache_key] = result
+                        st.rerun()
+                    except requests.exceptions.HTTPError as e:
+                        if e.response.status_code == 400:
+                            st.error("❌ Clé API invalide — vérifie ta clé dans les paramètres.")
+                        else:
+                            st.error(f"❌ Erreur API Gemini ({e.response.status_code}) — réessaie dans quelques instants.")
+                    except requests.exceptions.Timeout:
+                        st.error("❌ Timeout — Gemini n'a pas répondu à temps. Réessaie.")
+                    except Exception as e:
+                        st.error(f"❌ Erreur inattendue : {e}")
 
     st.caption(f"Données au {last_date} · {nb_snaps} snapshot(s) ce mois")
 
@@ -3007,6 +3092,44 @@ def page_saisie():
                 st.success("✅ Paramètres enregistrés avec succès !")
             except Exception as e:
                 st.error(f"❌ Erreur lors de la sauvegarde : {e}")
+
+        st.divider()
+        st.subheader("🤖 Clé API Gemini (Analyse IA)")
+        st.caption(
+            "Clé Google AI Studio pour l'analyse mensuelle IA. "
+            "Gratuit sur [aistudio.google.com](https://aistudio.google.com)."
+        )
+
+        gemini_key_saved = settings.get("gemini_api_key") or ""
+        col_key, col_btn = st.columns([4, 1])
+        with col_key:
+            new_gemini_key = st.text_input(
+                "Clé API Gemini",
+                value="",
+                type="password",
+                placeholder="AIzaSy...",
+                label_visibility="collapsed",
+            )
+        with col_btn:
+            if st.button("💾 Enregistrer", key="save_gemini_key", use_container_width=True):
+                if new_gemini_key.strip():
+                    try:
+                        supabase.table("settings").upsert({
+                            "id":         1,
+                            "gemini_api_key": new_gemini_key.strip(),
+                            "updated_at": pd.Timestamp.now(tz="UTC").isoformat(),
+                        }).execute()
+                        fetch_settings.clear()
+                        st.success("✅ Clé enregistrée.")
+                    except Exception as e:
+                        st.error(f"❌ Erreur : {e}")
+                else:
+                    st.warning("Saisis une clé avant d'enregistrer.")
+
+        if gemini_key_saved:
+            st.caption(f"✅ Clé configurée — se termine par `...{gemini_key_saved[-4:]}`")
+        else:
+            st.caption("❌ Aucune clé configurée — l'analyse IA dans la Synthèse mensuelle est désactivée.")
 
     # ══════════════════════════════════════════════════════════
     # ONGLET 2 — PRIX MANUELS
