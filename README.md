@@ -1,4 +1,4 @@
-# 📊 BeyondGrid — v4.5
+# 📊 BeyondGrid — v4.6
 
 > Dashboard de suivi de portefeuille financier multi-comptes, avec performances ajustées des apports, suivi FIRE et analyse IA mensuelle.
 
@@ -187,10 +187,18 @@ Cela garantit qu'un DCA de 500 € un lundi n'apparaît pas comme un gain de 500
 
 ## 🤖 Analyse IA mensuelle
 
-La page **Synthèse mensuelle** intègre une analyse générée par **Gemini 1.5 Flash** (Google).
+La page **Synthèse mensuelle** intègre une analyse générée par **Gemini 2.5 Flash** (Google).
+
+Le prompt envoie à Gemini :
+- Performance du mois (valeur début/fin, variation €/%)
+- Liste complète des actifs détenus (nom, classe, géographie)
+- Opérations du mois (achats/ventes avec montants)
+- DCA, dividendes et trajectoire FIRE
+
+Gemini utilise sa connaissance des marchés pour contextualiser les perfs des actifs spécifiques (macro, secteurs, zones géo) et rédige une analyse en 2-3 paragraphes.
 
 **Activation :**
-1. Créer une clé gratuite sur [aistudio.google.com](https://aistudio.google.com) (sans CB)
+1. Créer une clé gratuite sur [aistudio.google.com](https://aistudio.google.com) (sans CB) — utiliser **Gemini 2.5 Flash**
 2. La coller dans **Saisie manuelle → ⚙️ Paramètres → Clé API Gemini**
 3. Cliquer "✨ Générer l'analyse" dans la Synthèse mensuelle
 
