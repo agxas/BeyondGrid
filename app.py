@@ -2933,44 +2933,74 @@ def page_synthese_mensuelle():
                 st.rerun()
         else:
             if st.button("✨ Générer l'analyse IA", key="gen_gemini", type="primary"):
-                # Construire le contexte du mois
-                mois_label = f"{MOIS_FR[selected.month]} {selected.year}"
+                mois_label     = f"{MOIS_FR[selected.month]} {selected.year}"
                 fire_target_val = float(settings.get("fire_target_amount") or 0)
-                fire_pct_str    = ""
-                if fire_target_val > 0 and val_end:
-                    fire_pct = val_end / fire_target_val * 100
-                    fire_pct_str = f"\n- Progression FIRE : {fire_pct:.1f} % de l'objectif ({fmt_eur(fire_target_val)})"
-
                 dca_target_val  = float(settings.get("monthly_dca") or 0)
-                dca_context     = (
+
+                # Actifs détenus (ayant au moins un achat)
+                buy_asset_ids = df_txn[df_txn["type"] == "buy"]["asset_id"].dropna().astype(int).unique()
+                assets_held   = df_assets[df_assets["id"].isin(buy_asset_ids)][["name", "asset_class", "geography"]].drop_duplicates()
+                assets_lines  = "\n".join(
+                    f"  - {r['name']} ({r['asset_class']}"
+                    + (f", {r['geography']}" if r.get("geography") else "") + ")"
+                    for _, r in assets_held.iterrows()
+                ) or "  (aucun actif détecté)"
+
+                # Opérations du mois (achats / ventes)
+                ops_month = df_txn_month[df_txn_month["type"].isin(["buy", "sell"])].copy()
+                if not ops_month.empty:
+                    ops_month["asset_name"] = ops_month["asset_id"].map(asset_map).fillna("—")
+                    ops_month["label"]      = ops_month["type"].map({"buy": "Achat", "sell": "Vente"})
+                    ops_lines = "\n".join(
+                        f"  - {r['label']} {r['asset_name']} : {fmt_eur(abs(r['total_amount']))}"
+                        for _, r in ops_month.iterrows()
+                    )
+                else:
+                    ops_lines = "  Aucune opération ce mois"
+
+                # DCA
+                dca_context = (
                     f"{fmt_eur(invested_month)} investis / objectif {fmt_eur(dca_target_val)} "
                     f"({invested_month / dca_target_val * 100:.0f} %)"
-                    if dca_target_val > 0 else "DCA non configuré"
+                    if dca_target_val > 0 else "Non configuré"
                 )
+
+                # Dividendes
                 div_context = (
                     f"{fmt_eur(float(df_div_month['total_amount'].sum()))} "
                     f"({len(df_div_month)} versement(s))"
                     if not df_div_month.empty else "Aucun"
                 )
 
-                prompt = f"""Tu es un assistant spécialisé en investissement personnel pour un investisseur français.
-Voici les données du portefeuille pour {mois_label} :
+                # FIRE
+                fire_line = ""
+                if fire_target_val > 0 and val_end:
+                    fire_pct  = val_end / fire_target_val * 100
+                    fire_line = f"\n- Progression FIRE : {fire_pct:.1f} % de l'objectif {fmt_eur(fire_target_val)}"
 
-- Valeur début de mois : {fmt_eur(val_start) if val_start else 'inconnue'}
-- Valeur fin de mois : {fmt_eur(val_end)}
-- Variation : {fmt_eur(variation_eur) if variation_eur is not None else 'inconnue'} ({f'{variation_pct:+.2f} %' if variation_pct is not None else 'inconnue'})
-- Transactions ce mois : {len(df_txn_month)} opération(s)
-- DCA mensuel : {dca_context}
-- Dividendes reçus : {div_context}{fire_pct_str}
+                prompt = f"""Tu es un analyste financier personnel pour un investisseur français en stratégie FIRE.
 
-Rédige une analyse concise et personnalisée en français (3-4 courts paragraphes). Commente :
-1. La performance du mois (bon/mauvais mois ? contexte ?)
-2. La discipline d'investissement (respect du DCA ?)
-3. Les dividendes si pertinent
-4. Un mot sur la trajectoire FIRE si les données sont disponibles
+DONNÉES DU PORTEFEUILLE — {mois_label}
 
-Sois factuel, bienveillant et concis. Pas de bullet points, du texte fluide.
-Commence directement par l'analyse sans formule de politesse ni "Bonjour"."""
+Performance :
+- Valeur début : {fmt_eur(val_start) if val_start else 'inconnue'} → fin : {fmt_eur(val_end)}
+- Variation : {fmt_eur(variation_eur) if variation_eur is not None else '—'} ({f'{variation_pct:+.2f} %' if variation_pct is not None else '—'})
+
+Portefeuille détenu :
+{assets_lines}
+
+Opérations du mois :
+{ops_lines}
+
+Épargne & DCA : {dca_context}
+Dividendes reçus : {div_context}{fire_line}
+
+---
+Rédige une analyse en 2-3 paragraphes courts et percutants.
+- Utilise ta connaissance des marchés pour expliquer les performances de ces actifs spécifiques sur ce mois (contexte macro, secteurs, zones géographiques).
+- Commente la discipline d'épargne et la trajectoire FIRE si disponible.
+- Sois direct et factuel, pas de généralités creuses. Pas de bullet points.
+- Commence immédiatement par l'analyse, sans salutation."""
 
                 with st.spinner("Analyse en cours..."):
                     try:
