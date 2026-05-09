@@ -1701,7 +1701,7 @@ def _call_gemini(api_key: str, prompt: str) -> str:
     )
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 1024},
+        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 2048},
     }
     resp = requests.post(url, json=payload, timeout=30)
     resp.raise_for_status()
@@ -2969,7 +2969,8 @@ Rédige une analyse concise et personnalisée en français (3-4 courts paragraph
 3. Les dividendes si pertinent
 4. Un mot sur la trajectoire FIRE si les données sont disponibles
 
-Sois factuel, bienveillant et concis. Pas de bullet points, du texte fluide."""
+Sois factuel, bienveillant et concis. Pas de bullet points, du texte fluide.
+Commence directement par l'analyse sans formule de politesse ni "Bonjour"."""
 
                 with st.spinner("Analyse en cours..."):
                     try:
