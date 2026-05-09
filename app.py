@@ -32,8 +32,14 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "4.2"
+APP_VERSION = "4.3"
 PATCH_NOTES = {
+    "4.3": [
+        "Refactoring : page_vue_globale() découpée en 5 sous-fonctions (_vg_render_kpis, _vg_render_performance, _vg_render_evolution, _vg_render_fire, _vg_render_portfolio) — fonction principale réduite à ~30 lignes",
+        "Refactoring : page_analyses() découpée en 5 sous-fonctions (_an_render_annual_performance, _an_render_risk_metrics, _an_render_comparisons, _an_render_dca, _an_render_dividends) — fonction principale réduite à ~30 lignes",
+        "UI : séparateurs visuels (st.divider) entre chaque section des deux pages pour une meilleure lisibilité",
+        "Optimisation : compute_positions_with_pru() appelé une seule fois dans _vg_render_portfolio (positions + allocation partagent le même résultat mis en cache)",
+    ],
     "4.2": [
         "Nouveau : alerte drawdown sévère dans la sidebar — visible sur toutes les pages si le portefeuille chute de plus de 20 % depuis son plus haut",
         "Amélioration FIRE : disclaimer sous la date estimée rappelant les hypothèses du calcul (rendement constant, DCA fixe, hors inflation)",
@@ -1827,47 +1833,18 @@ def compute_dividends(
     }
 
 
-def page_vue_globale():
-    st.title("📊 Synthèse du Patrimoine")
-    _set_page_title("Vue Globale")
-
-    try:
-        with st.spinner("Chargement des données..."):
-            df_snap     = fetch_snapshots_agg()
-            settings    = fetch_settings()
-            df_txn      = fetch_transactions()
-            df_assets   = fetch_assets()
-            df_snap_acc = fetch_snapshots_by_account()
-    except RuntimeError as e:
-        st.error(f"❌ Base de données inaccessible — {e}")
-        st.stop()
-
-    if df_snap.empty:
-        st.warning("Aucun snapshot disponible. Lance le script de snapshot pour commencer.")
-        return
-
-    kpis         = compute_kpis(df_snap)
-    daily_change = compute_daily_change(df_snap)
-    fire         = compute_fire(kpis, settings)
-
-    # Total return = PV latente + dividendes reçus (calculé tôt pour l'affichage)
-    div_data         = compute_dividends(df_txn, df_assets)
+def _vg_render_kpis(kpis: dict, daily_change, div_data: dict) -> None:
+    """KPIs de situation : valeur totale, capital investi, plus-value latente."""
     total_dividends  = div_data["total"] if not div_data.get("empty") else 0.0
     total_return     = kpis["plus_value"] + total_dividends
     total_return_pct = (
         total_return / kpis["invested_capital"] * 100
         if kpis["invested_capital"] > 0 else 0.0
     )
-
-    nb_days, is_stale = check_data_freshness(df_snap)
-    if is_stale:
-        st.warning(
-            f"⚠️ Dernier snapshot il y a **{nb_days} jours ouvrés** "
-            f"({df_snap.iloc[-1]['date'].strftime('%d/%m/%Y')}) — "
-            "vérifie que GitHub Actions s'est bien déclenché."
-        )
-
-    # ── 1. Situation du jour ───────────────────────────────────────
+    pv_subline = (
+        f"Total return (÷ dividendes) : {fmt_eur(total_return)} · {total_return_pct:+.2f} %"
+        if total_dividends > 0 else None
+    )
     col1, col2, col3 = st.columns(3)
     with col1:
         display_kpi("Valeur totale", fmt_eur(kpis["total_value"]))
@@ -1876,28 +1853,19 @@ def page_vue_globale():
             signe = "▲" if delta_eur >= 0 else "▼"
             st.caption(f"{signe} {fmt_eur(delta_eur)} aujourd'hui ({delta_pct:+.2f} %)")
     display_kpi_block(col2, "Capital investi", fmt_eur(kpis["invested_capital"]))
-
-    # Subline total return si des dividendes ont été reçus
-    pv_subline = (
-        f"Total return (÷ dividendes) : {fmt_eur(total_return)} · {total_return_pct:+.2f} %"
-        if total_dividends > 0 else None
-    )
     display_kpi_block(col3, "Plus-value latente", fmt_eur(kpis["plus_value"]),
                       kpis["perf_pct"], is_percent=True, subline=pv_subline)
 
-    # ── 2. Performance récente ─────────────────────────────────────
-    st.subheader("📅 Performance récente")
 
-    # Pré-calcul : chaque tranche de période est construite UNE SEULE FOIS.
-    # Les 3 fonctions (perf %, valeur €, sparkline) réutilisent le même indice
-    # au lieu de le recalculer chacune de leur côté (économie : 9 → 3 appels).
+def _vg_render_performance(df_snap: pd.DataFrame) -> None:
+    """Perfs 1m / 3m / 1an / CAGR avec sparklines pré-calculées."""
+    st.subheader("📅 Performance récente")
     _period_months = [1, 3, 12]
     _period_slices = {m: _slice_period(df_snap, m) for m in _period_months}
     _period_idx    = {
         m: _build_perf_index(df_s) if not df_s.empty else pd.Series(dtype=float)
         for m, df_s in _period_slices.items()
     }
-    # Index complet réutilisé pour CAGR (évite un appel supplémentaire)
     _full_idx = _build_perf_index(df_snap)
     cagr      = compute_cagr(df_snap, perf_index=_full_idx)
 
@@ -1912,21 +1880,19 @@ def page_vue_globale():
     spark_12m = compute_sparkline(df_snap, 12, perf_index=_period_idx[12])
 
     col1, col2, col3, col4 = st.columns(4)
-    display_kpi_block(col1, "1 mois",  fmt_pct(perf_1m),
-                      subline=f"{fmt_eur(val_1m)} • {spark_1m}")
-    display_kpi_block(col2, "3 mois",  fmt_pct(perf_3m),
-                      subline=f"{fmt_eur(val_3m)} • {spark_3m}")
-    display_kpi_block(col3, "1 an",    fmt_pct(perf_12m),
-                      subline=f"{fmt_eur(val_12m)} • {spark_12m}")
+    display_kpi_block(col1, "1 mois",  fmt_pct(perf_1m),  subline=f"{fmt_eur(val_1m)} • {spark_1m}")
+    display_kpi_block(col2, "3 mois",  fmt_pct(perf_3m),  subline=f"{fmt_eur(val_3m)} • {spark_3m}")
+    display_kpi_block(col3, "1 an",    fmt_pct(perf_12m), subline=f"{fmt_eur(val_12m)} • {spark_12m}")
     display_kpi_block(
         col4, "CAGR (depuis le début)",
         fmt_pct(cagr) if cagr is not None else "—",
         subline=f"{len(df_snap)} snapshots" if cagr is not None else "< 30j de données",
     )
 
-    # ── 3. Évolution ───────────────────────────────────────────────
-    st.subheader("📈 Évolution")
 
+def _vg_render_evolution(df_snap: pd.DataFrame, df_snap_acc: pd.DataFrame) -> None:
+    """Graphe d'évolution patrimoine + vue par compte avec filtre période."""
+    st.subheader("📈 Évolution")
     col_period, _ = st.columns([2, 5])
     with col_period:
         periode = st.selectbox(
@@ -1947,24 +1913,19 @@ def page_vue_globale():
 
     with tab_comptes:
         if df_acc_evo.empty:
-            st.info("Aucune donnée par compte.")
+            st.info("Aucune donnée par compte pour cette période.")
         else:
             total = df_acc_evo.iloc[-1].sum()
             cols  = st.columns(len(df_acc_evo.columns))
-
             for i, col_name in enumerate(df_acc_evo.columns):
                 values  = df_acc_evo[col_name].dropna()
                 current = float(values.iloc[-1])
                 pct     = (current / total * 100) if total > 0 else 0
-
                 if len(values) < 2:
                     with cols[i]:
                         display_kpi(col_name, fmt_eur(current))
                     continue
-
-                start = float(values.iloc[0])
-
-                # Perf ajustée : Modified Dietz par compte
+                start       = float(values.iloc[0])
                 acc_rows    = df_snap_acc_filtered[
                     df_snap_acc_filtered["account_name"] == col_name
                 ].sort_values("date")
@@ -1975,7 +1936,6 @@ def page_vue_globale():
                 )
                 perf_market_eur = current - start - new_capital
                 perf_pct        = (perf_market_eur / start * 100) if start > 0 else 0
-
                 display_kpi_block(
                     cols[i], col_name, fmt_eur(current), perf_pct,
                     is_percent=True,
@@ -2003,9 +1963,10 @@ def page_vue_globale():
             )
             st.plotly_chart(fig_acc, use_container_width=True)
 
-    # ── 4. Objectif FIRE ──────────────────────────────────────────
-    st.subheader("🎯 Objectif FIRE")
 
+def _vg_render_fire(fire: dict, kpis: dict, settings: dict, div_data: dict) -> None:
+    """Barre FIRE, date estimée, revenu passif et résumé dividendes."""
+    st.subheader("🎯 Objectif FIRE")
     if fire["fire_target"] > 0:
         st.progress(
             min(fire["fire_pct"] / 100, 1.0),
@@ -2014,7 +1975,6 @@ def page_vue_globale():
                 f"{fmt_eur(kpis['total_value'])} / {fmt_eur(fire['fire_target'])}"
             ),
         )
-        # Date estimée d'atteinte
         fire_date = compute_fire_date(
             current_value = kpis["total_value"],
             monthly_dca   = float(settings.get("monthly_dca") or 0),
@@ -2022,18 +1982,17 @@ def page_vue_globale():
             fire_target   = fire["fire_target"],
         )
         if fire_date is not None:
-            delta_years  = (fire_date - pd.Timestamp.today()).days / 365.25
-            years_int    = int(delta_years)
-            months_int   = int((delta_years - years_int) * 12)
-            delta_str    = f"{years_int} an{'s' if years_int > 1 else ''}"
+            delta_years = (fire_date - pd.Timestamp.today()).days / 365.25
+            years_int   = int(delta_years)
+            months_int  = int((delta_years - years_int) * 12)
+            delta_str   = f"{years_int} an{'s' if years_int > 1 else ''}"
             if months_int > 0:
                 delta_str += f" {months_int} mois"
             _MOIS_FR = [
                 "", "janvier", "février", "mars", "avril", "mai", "juin",
                 "juillet", "août", "septembre", "octobre", "novembre", "décembre",
             ]
-            mois_fr  = _MOIS_FR[fire_date.month]
-            st.caption(f"📅 Date estimée : **{mois_fr} {fire_date.year}** — dans {delta_str}")
+            st.caption(f"📅 Date estimée : **{_MOIS_FR[fire_date.month]} {fire_date.year}** — dans {delta_str}")
             _ret_pct = float(settings.get("estimated_annual_return") or 0.07) * 100
             _dca_eur = float(settings.get("monthly_dca") or 0)
             st.caption(
@@ -2051,14 +2010,11 @@ def page_vue_globale():
     display_kpi_block(col_f2, "Revenu passif annuel (4 %)",
                       f"{fmt_eur(fire['passive_income_annual'])}/an")
     if fire["freedom_days"] is not None:
-        display_kpi_block(
-            col_f3, "Jours de liberté financière",
-            f"{fire['freedom_days']:,.0f} jours".replace(",", " "),
-        )
+        display_kpi_block(col_f3, "Jours de liberté financière",
+                          f"{fire['freedom_days']:,.0f} jours".replace(",", " "))
     else:
         col_f3.info("Définis ton revenu mensuel pour ce calcul.")
 
-    # ── Dividendes (résumé compact) ───────────────────────────────
     if not div_data.get("empty"):
         yield_global = (
             div_data["ttm"] / kpis["total_value"] * 100
@@ -2067,36 +2023,325 @@ def page_vue_globale():
         col_d1, col_d2, col_d3 = st.columns(3)
         display_kpi_block(col_d1, "Dividendes reçus (total)", fmt_eur(div_data["total"]))
         display_kpi_block(col_d2, "Dividendes YTD",           fmt_eur(div_data["ytd"]))
-        display_kpi_block(col_d3, "Rendement dividendes (TTM)",
-                          f"{yield_global:.2f} %")
+        display_kpi_block(col_d3, "Rendement dividendes (TTM)", f"{yield_global:.2f} %")
 
-    # ── 5. Portefeuille — tabs Positions / Allocation ──────────────
+
+def _vg_render_portfolio(df_txn: pd.DataFrame, df_assets: pd.DataFrame, div_data: dict) -> None:
+    """Onglets Positions et Allocation."""
     st.subheader("📋 Portefeuille")
+    df_pos = compute_positions_with_pru(df_txn, df_assets)
+    by_ttm = div_data.get("by_asset_ttm", {}) if not div_data.get("empty") else {}
 
     tab_pos, tab_alloc = st.tabs(["📋 Positions", "📊 Allocation"])
-
     with tab_pos:
-        df_positions_detail = compute_positions_with_pru(df_txn, df_assets)
-        by_ttm = div_data.get("by_asset_ttm", {}) if not div_data.get("empty") else {}
-        render_positions_table(
-            df_positions_detail,
-            by_asset_ttm=by_ttm,
-            label_capital="Capital investi (positions)",
-        )
-
+        render_positions_table(df_pos, by_asset_ttm=by_ttm,
+                               label_capital="Capital investi (positions)")
     with tab_alloc:
-        df_positions_global = compute_positions_with_pru(df_txn, df_assets)
-        if not df_positions_global.empty:
+        if not df_pos.empty:
             col1, col2 = st.columns(2)
-            render_allocation_charts(df_positions_global, col1, col2)
+            render_allocation_charts(df_pos, col1, col2)
         else:
             st.info("Aucune position détectée.")
 
-    # ── Footer ─────────────────────────────────────────────────────
+
+def page_vue_globale():
+    st.title("📊 Synthèse du Patrimoine")
+    _set_page_title("Vue Globale")
+
+    try:
+        with st.spinner("Chargement des données..."):
+            df_snap     = fetch_snapshots_agg()
+            settings    = fetch_settings()
+            df_txn      = fetch_transactions()
+            df_assets   = fetch_assets()
+            df_snap_acc = fetch_snapshots_by_account()
+    except RuntimeError as e:
+        st.error(f"❌ Base de données inaccessible — {e}")
+        st.stop()
+
+    if df_snap.empty:
+        st.warning("Aucun snapshot disponible. Lance le script de snapshot pour commencer.")
+        return
+
+    kpis         = compute_kpis(df_snap)
+    daily_change = compute_daily_change(df_snap)
+    fire         = compute_fire(kpis, settings)
+    div_data     = compute_dividends(df_txn, df_assets)
+
+    nb_days, is_stale = check_data_freshness(df_snap)
+    if is_stale:
+        st.warning(
+            f"⚠️ Dernier snapshot il y a **{nb_days} jours ouvrés** "
+            f"({df_snap.iloc[-1]['date'].strftime('%d/%m/%Y')}) — "
+            "vérifie que GitHub Actions s'est bien déclenché."
+        )
+
+    _vg_render_kpis(kpis, daily_change, div_data)
+    st.divider()
+    _vg_render_performance(df_snap)
+    st.divider()
+    _vg_render_evolution(df_snap, df_snap_acc)
+    st.divider()
+    _vg_render_fire(fire, kpis, settings, div_data)
+    st.divider()
+    _vg_render_portfolio(df_txn, df_assets, div_data)
+
     st.caption(
         f"Dernière donnée : {df_snap.iloc[-1]['date'].strftime('%d/%m/%Y')} "
         f"· {len(df_snap)} snapshots disponibles"
     )
+
+def _an_render_annual_performance(df_snap: pd.DataFrame, perf_idx_full: pd.Series) -> None:
+    """Graphe et tableau de performance par année civile."""
+    st.subheader("📅 Performance par année")
+    df_annual = compute_annual_performance(df_snap, perf_index=perf_idx_full)
+    if df_annual.empty:
+        st.info("Pas encore assez de données pour calculer les performances annuelles.")
+        return
+
+    def _color(val):
+        if isinstance(val, (int, float)):
+            return "color: #2ECC71" if val > 0 else ("color: #E84C4C" if val < 0 else "")
+        return ""
+
+    df_chart   = df_annual.iloc[::-1].reset_index(drop=True)
+    bar_colors = ["#2ECC71" if v >= 0 else "#E84C4C" for v in df_chart["Perf %"]]
+    fig_annual = go.Figure(go.Bar(
+        x=df_chart["Perf %"], y=df_chart["Année"], orientation="h",
+        marker_color=bar_colors,
+        text=[f"{v:+.2f} %" for v in df_chart["Perf %"]],
+        textposition="outside",
+        hovertemplate="%{y} : %{x:+.2f} %<extra></extra>",
+    ))
+    fig_annual.update_layout(
+        height=max(180, len(df_chart) * 48),
+        margin=dict(l=0, r=70, t=10, b=0),
+        xaxis=dict(ticksuffix=" %", showgrid=True, gridcolor="#f0f0f0",
+                   zeroline=True, zerolinecolor="#cccccc", zerolinewidth=1.5),
+        yaxis=dict(showgrid=False),
+        plot_bgcolor="white", paper_bgcolor="rgba(0,0,0,0)",
+    )
+    st.plotly_chart(fig_annual, use_container_width=True)
+
+    styled = (
+        df_annual.style
+        .map(_color, subset=["Perf %", "Perf €"])
+        .format({
+            "Début":  fmt_eur, "Fin": fmt_eur,
+            "Perf €": lambda x: f"{x:+,.0f} €".replace(",", " "),
+            "Perf %": lambda x: f"{x:+.2f} %",
+        })
+    )
+    st.dataframe(styled, use_container_width=True, hide_index=True)
+
+
+def _an_render_risk_metrics(
+    df_filtered: pd.DataFrame,
+    risk_free_rate: float,
+    perf_idx_filtered: pd.Series,
+) -> None:
+    """Sharpe, volatilité et drawdown."""
+    st.subheader("⚡ Risque & Performance")
+    MIN_POINTS = 20
+    if len(df_filtered) < MIN_POINTS:
+        st.warning(
+            f"⏳ Données insuffisantes ({len(df_filtered)} snapshot(s), "
+            f"minimum recommandé : {MIN_POINTS}). "
+            "Sharpe et Volatilité s'afficheront automatiquement au fil des jours."
+        )
+        c1, c2 = st.columns(2)
+        c1.metric("Taux sans risque (Livret A)", f"{risk_free_rate * 100:.1f} %")
+        c2.metric("Nb jours analysés", f"{len(df_filtered)}")
+    else:
+        volatility         = compute_volatility(df_filtered)
+        sharpe             = compute_sharpe(df_filtered, risk_free_rate)
+        volatility_display = safe_value(volatility)
+        sharpe_display     = safe_value(sharpe)
+        sharpe_label = (
+            "🟢 Excellent"  if sharpe_display >= 2 else
+            "🟢 Bon"        if sharpe_display >= 1 else
+            "🟡 Acceptable" if sharpe_display >= 0 else "🔴 Négatif"
+        )
+        vol_label = (
+            "🟢 Faible"  if volatility_display < 10 else
+            "🟡 Modérée" if volatility_display < 20 else "🔴 Élevée"
+        )
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            display_kpi("Ratio de Sharpe", f"{sharpe_display:.2f}")
+            st.caption(sharpe_label)
+        with col2:
+            display_kpi("Volatilité annualisée", f"{volatility_display:.1f} %")
+            st.caption(vol_label)
+        with col3:
+            display_kpi("Taux sans risque (Livret A)", f"{risk_free_rate * 100:.1f} %")
+        with col4:
+            display_kpi("Nb jours analysés", f"{len(df_filtered)}")
+
+    with st.expander("💡 Comment lire ces indicateurs ?"):
+        st.markdown("""
+        **Ratio de Sharpe** — mesure le rendement obtenu *par unité de risque pris*
+        - `> 2` : excellent, rendement très bien rémunéré
+        - `1 → 2` : bon, performance solide pour le risque
+        - `0 → 1` : acceptable, mais le risque est peu rémunéré
+        - `< 0` : le portefeuille fait moins bien que le taux sans risque
+
+        **Volatilité annualisée** — amplitude moyenne des fluctuations
+        - `< 10 %` : faible (profil obligataire)
+        - `10–20 %` : modérée (profil actions diversifié)
+        - `> 20 %` : élevée (profil agressif ou concentré)
+
+        *Le taux sans risque utilisé est le Livret A, paramétrable dans Saisie manuelle.*
+        """)
+
+    st.subheader("📉 Drawdown")
+    fig_dd, max_dd = compute_drawdown(df_filtered, perf_index=perf_idx_filtered)
+    dd_label = (
+        "🟢 Faible" if max_dd > -10 else
+        "🟡 Modéré" if max_dd > -20 else "🔴 Sévère"
+    )
+    col_dd1, col_dd2, _ = st.columns([1, 1, 5])
+    display_kpi_block(col_dd1, "Pire drawdown", f"{max_dd:.1f} %")
+    col_dd2.metric("Niveau de risque", dd_label)
+    st.plotly_chart(fig_dd, use_container_width=True)
+
+
+def _an_render_comparisons(
+    df_filtered: pd.DataFrame,
+    df_assets: pd.DataFrame,
+    risk_free_rate: float,
+    perf_idx_filtered: pd.Series,
+) -> None:
+    """Comparaisons : Livret A puis benchmark."""
+    st.subheader("🏦 Portefeuille vs Livret A")
+    fig_la, perf_portef, perf_livret, ecart = compute_livret_a_comparison(
+        df_filtered, risk_free_rate, perf_index=perf_idx_filtered
+    )
+    col1, col2, col3 = st.columns(3)
+    display_kpi_block(col1, "Performance portefeuille", format_perf(perf_portef))
+    display_kpi_block(col2, f"Performance Livret A ({risk_free_rate*100:.1f} %)",
+                      format_perf(perf_livret))
+    display_kpi_block(col3, "Écart (alpha vs Livret A)",
+                      format_perf(ecart), ecart, is_percent=True)
+    st.plotly_chart(fig_la, use_container_width=True)
+
+    st.subheader("🏁 Portefeuille vs Benchmark")
+    df_benchmarks = df_assets[
+        df_assets["is_benchmark"] == True
+    ][["name", "yahoo_ticker"]].dropna(subset=["yahoo_ticker"])
+
+    if df_benchmarks.empty:
+        st.info(
+            "Aucun benchmark configuré. "
+            "Dans ta table `assets`, passe `is_benchmark = TRUE` "
+            "sur un ETF (ex: IWDA.AS pour MSCI World)."
+        )
+        return
+
+    selected = (
+        df_benchmarks.iloc[0] if len(df_benchmarks) == 1
+        else df_benchmarks[
+            df_benchmarks["name"] == st.selectbox("Benchmark", df_benchmarks["name"].tolist())
+        ].iloc[0]
+    )
+    with st.spinner(f"Chargement de {selected['name']}..."):
+        fig_bench, perf_portef, perf_bench, ecart = compute_benchmark_comparison(
+            df_filtered, selected["yahoo_ticker"], selected["name"],
+            perf_index=perf_idx_filtered,
+        )
+    col1, col2, col3 = st.columns(3)
+    display_kpi_block(col1, "Performance portefeuille", f"{perf_portef:+.2f} %")
+    if perf_bench is not None:
+        display_kpi_block(col2, f"Performance {selected['name']}", f"{perf_bench:+.2f} %")
+        display_kpi_block(col3, "Alpha généré", f"{ecart:+.2f} %", ecart, is_percent=True)
+    else:
+        col2.warning("Données benchmark indisponibles")
+    st.plotly_chart(fig_bench, use_container_width=True)
+
+
+def _an_render_dca(df_snap: pd.DataFrame, settings: dict) -> None:
+    """Projection DCA multi-scénarios."""
+    st.subheader("🔭 Projection DCA")
+    monthly_dca    = float(settings.get("monthly_dca") or 0)
+    annual_return  = float(settings.get("estimated_annual_return") or 0.07)
+    inflation_rate = float(settings.get("inflation_rate") or 0.02)
+    fire_target    = float(settings.get("fire_target_amount") or 0)
+
+    if monthly_dca == 0:
+        st.info("💡 Renseigne ton DCA mensuel dans **Saisie manuelle** pour activer la projection.")
+        return
+
+    col_horizon, col_info = st.columns([2, 5])
+    with col_horizon:
+        years = st.slider("Horizon (années)", min_value=1, max_value=40, value=20, step=1)
+    with col_info:
+        st.caption(
+            f"DCA mensuel : **{fmt_eur(monthly_dca)}** · "
+            f"Rendement neutre : **{annual_return*100:.1f} %/an** · "
+            f"Scénarios : ±3 % · Inflation : **{inflation_rate*100:.1f} %/an**"
+        )
+
+    kpis_full = compute_kpis(df_snap)
+    fig_dca, theorique, reel, capital = compute_dca_projection_multi(
+        current_value    = kpis_full["total_value"],
+        current_invested = kpis_full["invested_capital"],
+        monthly_dca      = monthly_dca,
+        annual_return    = annual_return,
+        inflation_rate   = inflation_rate,
+        fire_target      = fire_target,
+        years            = years,
+    )
+    val_finale_nom  = theorique[-1]
+    val_finale_reel = reel[-1]
+    capital_final   = capital[-1]
+    gain_total      = val_finale_nom - capital_final
+    gain_pct        = (gain_total / capital_final * 100) if capital_final > 0 else 0
+
+    col1, col2, col3, col4 = st.columns(4)
+    display_kpi_block(col1, f"Valeur dans {years} ans",       fmt_eur(val_finale_nom))
+    display_kpi_block(col2, "Valeur réelle (pouvoir d'achat)", fmt_eur(val_finale_reel))
+    display_kpi_block(col3, "Capital total investi",           fmt_eur(capital_final))
+    display_kpi_block(col4, "Gain généré par les intérêts",
+                      fmt_eur(gain_total), gain_pct, is_percent=True)
+    st.plotly_chart(fig_dca, use_container_width=True)
+    st.caption(
+        f"📌 À cet horizon, la règle des 4% générerait "
+        f"**{fmt_eur(val_finale_nom * 0.04 / 12)}/mois** nominaux "
+        f"(soit **{fmt_eur(val_finale_reel * 0.04 / 12)}/mois** en euros d'aujourd'hui)"
+    )
+
+
+def _an_render_dividends(
+    df_txn: pd.DataFrame,
+    df_assets: pd.DataFrame,
+    df_snap: pd.DataFrame,
+) -> None:
+    """Analyse des dividendes reçus."""
+    st.subheader("💰 Dividendes")
+    div_data = compute_dividends(df_txn, df_assets)
+    if div_data.get("empty"):
+        st.info("Aucun dividende enregistré. Saisis-les dans Saisie manuelle (type : Dividende).")
+        return
+
+    kpis_full = compute_kpis(df_snap)
+    yield_ttm = (
+        div_data["ttm"] / kpis_full["total_value"] * 100
+        if kpis_full["total_value"] > 0 else 0.0
+    )
+    col1, col2, col3, col4 = st.columns(4)
+    display_kpi_block(col1, "Total reçu (all time)",   fmt_eur(div_data["total"]))
+    display_kpi_block(col2, "Reçu cette année (YTD)", fmt_eur(div_data["ytd"]))
+    display_kpi_block(col3, "Rendement TTM",           f"{yield_ttm:.2f} %")
+    display_kpi_block(col4, "Nombre de versements",    str(div_data["nb"]))
+
+    col_left, col_right = st.columns(2)
+    with col_left:
+        st.caption("Par source")
+        st.plotly_chart(div_data["fig_asset"], use_container_width=True)
+    with col_right:
+        st.caption("Par année")
+        st.plotly_chart(div_data["fig_year"], use_container_width=True)
+
 
 def page_analyses():
     st.title("📊 Analyses & Graphiques")
@@ -2118,7 +2363,6 @@ def page_analyses():
 
     risk_free_rate = float(settings.get("livret_a_rate") or 0.03)
 
-    # ── Filtre de période (partagé sur toute la page) ──────────
     col_period, _ = st.columns([2, 5])
     with col_period:
         periode = st.selectbox(
@@ -2127,348 +2371,21 @@ def page_analyses():
             index=PERIODE_OPTIONS.index(PERIODE_DEFAULT),
         )
 
-    df_filtered = filter_by_period(df_snap, periode)
-
-    # Pré-calcul des indices de performance UNE SEULE FOIS par dataset.
-    # compute_drawdown, compute_livret_a_comparison, compute_benchmark_comparison
-    # et compute_annual_performance partagent ces indices au lieu de les recalculer.
+    df_filtered        = filter_by_period(df_snap, periode)
     _perf_idx_full     = _build_perf_index(df_snap)     if len(df_snap)     >= 2 else pd.Series(dtype=float)
     _perf_idx_filtered = _build_perf_index(df_filtered) if len(df_filtered) >= 2 else pd.Series(dtype=float)
 
     st.divider()
-
-    # ── Performance annuelle ───────────────────────────────────
-    st.subheader("📅 Performance par année")
-
-    df_annual = compute_annual_performance(df_snap, perf_index=_perf_idx_full)
-
-    if not df_annual.empty:
-
-        def color_perf_num(val):
-            """Coloring appliqué sur valeurs numériques brutes (avant formatage)."""
-            if isinstance(val, (int, float)):
-                if val > 0:
-                    return "color: #2ECC71"
-                elif val < 0:
-                    return "color: #E84C4C"
-            return ""
-
-        # ── Graphique en barres horizontal ─────────────────────
-        # Ordre chronologique (plus ancien en haut → plus récent en bas)
-        df_chart = df_annual.iloc[::-1].reset_index(drop=True)
-        bar_colors = ["#2ECC71" if v >= 0 else "#E84C4C" for v in df_chart["Perf %"]]
-
-        fig_annual = go.Figure(go.Bar(
-            x=df_chart["Perf %"],
-            y=df_chart["Année"],
-            orientation="h",
-            marker_color=bar_colors,
-            text=[f"{v:+.2f} %" for v in df_chart["Perf %"]],
-            textposition="outside",
-            hovertemplate="%{y} : %{x:+.2f} %<extra></extra>",
-        ))
-        fig_annual.update_layout(
-            height=max(180, len(df_chart) * 48),
-            margin=dict(l=0, r=70, t=10, b=0),
-            xaxis=dict(
-                ticksuffix=" %",
-                showgrid=True,
-                gridcolor="#f0f0f0",
-                zeroline=True,
-                zerolinecolor="#cccccc",
-                zerolinewidth=1.5,
-            ),
-            yaxis=dict(showgrid=False),
-            plot_bgcolor="white",
-            paper_bgcolor="rgba(0,0,0,0)",
-        )
-        st.plotly_chart(fig_annual, use_container_width=True)
-
-        # ── Tableau avec coloring sur valeurs numériques ────────
-        # On applique le style AVANT le formatage en string,
-        # puis on formate via Styler.format() pour garder la coloration.
-        styled = (
-            df_annual.style
-            .map(color_perf_num, subset=["Perf %", "Perf €"])
-            .format({
-                "Début":  fmt_eur,
-                "Fin":    fmt_eur,
-                "Perf €": lambda x: f"{x:+,.0f} €".replace(",", " "),
-                "Perf %": lambda x: f"{x:+.2f} %",
-            })
-        )
-        st.dataframe(styled, use_container_width=True, hide_index=True)
-
-    else:
-        st.info("Pas encore assez de données pour calculer les performances annuelles.")
-
+    _an_render_annual_performance(df_snap, _perf_idx_full)
     st.divider()
-
-    # ── 4a : Sharpe & Volatilité ───────────────────────────────
-    st.subheader("⚡ Risque & Performance")
-
-    # FIX : seuil minimum pour des métriques fiables
-    MIN_POINTS = 20
-
-    if len(df_filtered) < MIN_POINTS:
-        st.warning(
-            f"⏳ Données insuffisantes pour Sharpe et Volatilité "
-            f"({len(df_filtered)} snapshot(s) disponible(s), minimum recommandé : {MIN_POINTS}). "
-            "Ces métriques s'afficheront automatiquement au fil des jours."
-        )
-        col3, col4 = st.columns(2)
-        col3.metric("Taux sans risque (Livret A)", f"{risk_free_rate * 100:.1f} %")
-        col4.metric("Nb jours analysés", f"{len(df_filtered)}")
-    else:
-        volatility = compute_volatility(df_filtered)
-        sharpe     = compute_sharpe(df_filtered, risk_free_rate)
-        
-        volatility_display = safe_value(volatility)
-        sharpe_display     = safe_value(sharpe)
-
-        sharpe_label = (
-            "🟢 Excellent"  if sharpe_display >= 2  else
-            "🟢 Bon"        if sharpe_display >= 1  else
-            "🟡 Acceptable" if sharpe_display >= 0  else
-            "🔴 Négatif"
-        )
-        vol_label = (
-            "🟢 Faible"  if volatility_display < 10 else
-            "🟡 Modérée" if volatility_display < 20 else
-            "🔴 Élevée"
-        )
-
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            display_kpi(
-                "Ratio de Sharpe",
-                f"{sharpe_display:.2f}",
-            )
-            st.caption(sharpe_label)
-        
-        with col2:
-            display_kpi(
-                "Volatilité annualisée",
-                f"{volatility_display:.1f} %",
-            )
-            st.caption(vol_label)
-
-        
-        with col3:
-            display_kpi(
-                "Taux sans risque (Livret A)",
-                f"{risk_free_rate * 100:.1f} %",
-            )
-        
-        with col4:
-            display_kpi(
-                "Nb jours analysés",
-                f"{len(df_filtered)}",
-            )
-
-    with st.expander("💡 Comment lire ces indicateurs ?"):
-        st.markdown("""
-        **Ratio de Sharpe** — mesure le rendement obtenu *par unité de risque pris*
-        - `> 2` : excellent, rendement très bien rémunéré
-        - `1 → 2` : bon, performance solide pour le risque
-        - `0 → 1` : acceptable, mais le risque est peu rémunéré
-        - `< 0` : le portefeuille fait moins bien que le taux sans risque
-
-        **Volatilité annualisée** — amplitude moyenne des fluctuations
-        - `< 10 %` : faible (profil obligataire)
-        - `10–20 %` : modérée (profil actions diversifié)
-        - `> 20 %` : élevée (profil agressif ou concentré)
-
-        *Le taux sans risque utilisé est le Livret A, paramétrable dans Saisie manuelle.*
-        """)
-
-    # ── Drawdown ────────────────────────────────────────────────
-    st.subheader("📉 Drawdown")
-
-    fig_dd, max_dd = compute_drawdown(df_filtered, perf_index=_perf_idx_filtered)
-
-    if max_dd > -10:
-        dd_label = "🟢 Faible"
-    elif max_dd > -20:
-        dd_label = "🟡 Modéré"
-    else:
-        dd_label = "🔴 Sévère"
-
-    col_dd1, col_dd2, _ = st.columns([1, 1, 5])
-    display_kpi_block(col_dd1, "Pire drawdown", f"{max_dd:.1f} %")
-    col_dd2.metric("Niveau de risque", dd_label)
-    st.plotly_chart(fig_dd, use_container_width=True)
-
+    _an_render_risk_metrics(df_filtered, risk_free_rate, _perf_idx_filtered)
     st.divider()
-    st.subheader("🏦 Portefeuille vs Livret A")
-
-    fig_la, perf_portef, perf_livret, ecart = compute_livret_a_comparison(
-        df_filtered, risk_free_rate, perf_index=_perf_idx_filtered
-    )
-
-
-    col1, col2, col3 = st.columns(3)
-    display_kpi_block(col1, "Performance portefeuille",   format_perf(perf_portef))
-    display_kpi_block(col2, f"Performance Livret A ({risk_free_rate*100:.1f} %)",
-                      format_perf(perf_livret))
-    display_kpi_block(col3, "Écart (alpha vs Livret A)",
-                      format_perf(ecart), ecart, is_percent=True)
-
-    st.plotly_chart(fig_la, use_container_width=True)
-
-    # ── 4c : Performance vs Benchmark ─────────────────────────
-    st.subheader("🏁 Portefeuille vs Benchmark")
-
-    df_benchmarks = df_assets[
-        df_assets["is_benchmark"] == True
-    ][["name", "yahoo_ticker"]].dropna(subset=["yahoo_ticker"])
-
-    if df_benchmarks.empty:
-        st.info(
-            "Aucun benchmark configuré. "
-            "Dans ta table `assets`, passe `is_benchmark = TRUE` "
-            "sur un ETF (ex: IWDA.AS pour MSCI World)."
-        )
-    else:
-        if len(df_benchmarks) == 1:
-            selected = df_benchmarks.iloc[0]
-        else:
-            bench_choice = st.selectbox(
-                "Benchmark",
-                options=df_benchmarks["name"].tolist(),
-            )
-            selected = df_benchmarks[
-                df_benchmarks["name"] == bench_choice
-            ].iloc[0]
-
-        with st.spinner(f"Chargement de {selected['name']}..."):
-            fig_bench, perf_portef, perf_bench, ecart = compute_benchmark_comparison(
-                df_filtered,
-                selected["yahoo_ticker"],
-                selected["name"],
-                perf_index=_perf_idx_filtered,
-            )
-
-        col1, col2, col3 = st.columns(3)
-        display_kpi_block(col1, "Performance portefeuille", f"{perf_portef:+.2f} %")
-
-        if perf_bench is not None:
-            display_kpi_block(col2, f"Performance {selected['name']}",
-                              f"{perf_bench:+.2f} %")
-            display_kpi_block(col3, "Alpha généré",
-                              f"{ecart:+.2f} %", ecart, is_percent=True)
-        else:
-            col2.warning("Données benchmark indisponibles")
-
-        st.plotly_chart(fig_bench, use_container_width=True)
-
-    # ── 5 : Projection DCA ────────────────────────────────────
-    st.subheader("🔭 Projection DCA")
-
-    monthly_dca    = float(settings.get("monthly_dca") or 0)
-    annual_return  = float(settings.get("estimated_annual_return") or 0.07)
-    inflation_rate = float(settings.get("inflation_rate") or 0.02)
-    fire_target    = float(settings.get("fire_target_amount") or 0)
-
-    # Vérification que les paramètres sont renseignés
-    if monthly_dca == 0:
-        st.info(
-            "💡 Renseigne ton DCA mensuel dans **Saisie manuelle** "
-            "pour activer la projection."
-        )
-    else:
-        # Sélecteur d'horizon temporel
-        col_horizon, col_info = st.columns([2, 5])
-        with col_horizon:
-            years = st.slider(
-                "Horizon (années)",
-                min_value=1,
-                max_value=40,
-                value=20,
-                step=1,
-            )
-
-        # Paramètres utilisés (transparence)
-        with col_info:
-            st.caption(
-                f"DCA mensuel : **{fmt_eur(monthly_dca)}** · "
-                f"Rendement neutre : **{annual_return*100:.1f} %/an** · "
-                f"Scénarios : ±3 % · "
-                f"Inflation : **{inflation_rate*100:.1f} %/an**"
-            )
-
-        # Projection multi-scénarios (pessimiste / neutre / optimiste ±3 %)
-        kpis_full = compute_kpis(df_snap)
-        fig_dca, theorique, reel, capital = compute_dca_projection_multi(
-            current_value    = kpis_full["total_value"],
-            current_invested = kpis_full["invested_capital"],
-            monthly_dca      = monthly_dca,
-            annual_return    = annual_return,
-            inflation_rate   = inflation_rate,
-            fire_target      = fire_target,
-            years            = years,
-        )
-
-        # Métriques à l'horizon choisi
-        val_finale_nom  = theorique[-1]
-        val_finale_reel = reel[-1]
-        capital_final   = capital[-1]
-        gain_total      = val_finale_nom - capital_final
-        gain_pct = (gain_total / capital_final * 100) if capital_final > 0 else 0
-
-        col1, col2, col3, col4 = st.columns(4)
-        display_kpi_block(col1, f"Valeur dans {years} ans",    fmt_eur(val_finale_nom))
-        display_kpi_block(col2, "Valeur réelle (pouvoir d'achat)", fmt_eur(val_finale_reel))
-        display_kpi_block(col3, "Capital total investi",       fmt_eur(capital_final))
-        display_kpi_block(col4, "Gain généré par les intérêts",
-                          fmt_eur(gain_total), gain_pct, is_percent=True)
-
-        st.plotly_chart(fig_dca, use_container_width=True)
-
-        # Revenu passif à l'horizon
-        revenu_passif_nom  = val_finale_nom * 0.04 / 12
-        revenu_passif_reel = val_finale_reel * 0.04 / 12
-
-        st.caption(
-            f"📌 À cet horizon, la règle des 4% générerait "
-            f"**{fmt_eur(revenu_passif_nom)}/mois** nominaux "
-            f"(soit **{fmt_eur(revenu_passif_reel)}/mois** en euros d'aujourd'hui)"
-        )
-
-    # ── 💰 Dividendes ─────────────────────────────────────────────
+    _an_render_comparisons(df_filtered, df_assets, risk_free_rate, _perf_idx_filtered)
     st.divider()
-    st.subheader("💰 Dividendes")
+    _an_render_dca(df_snap, settings)
+    st.divider()
+    _an_render_dividends(df_txn, df_assets, df_snap)
 
-    div_data = compute_dividends(df_txn, df_assets)
-
-    if div_data.get("empty"):
-        st.info("Aucun dividende enregistré. Saisis tes dividendes dans Saisie manuelle (type : Dividende).")
-    else:
-        # ── KPIs ────────────────────────────────────────────────
-        # Calcul à partir de la situation actuelle (df_snap complet, non filtré)
-        kpis_full   = compute_kpis(df_snap)
-        yield_ttm   = (
-            div_data["ttm"] / kpis_full["total_value"] * 100
-            if kpis_full["total_value"] > 0 else 0.0
-        )
-        col1, col2, col3, col4 = st.columns(4)
-        display_kpi_block(col1, "Total reçu (all time)",    fmt_eur(div_data["total"]))
-        display_kpi_block(col2, "Reçu cette année (YTD)",  fmt_eur(div_data["ytd"]))
-        display_kpi_block(col3, "Rendement TTM",            f"{yield_ttm:.2f} %")
-        display_kpi_block(col4, "Nombre de versements",     str(div_data["nb"]))
-
-        # ── Graphiques ──────────────────────────────────────────
-        col_left, col_right = st.columns(2)
-
-        with col_left:
-            st.caption("Par source")
-            st.plotly_chart(div_data["fig_asset"], use_container_width=True)
-
-        with col_right:
-            st.caption("Par année")
-            st.plotly_chart(div_data["fig_year"], use_container_width=True)
-
-    # ── Pied de page ───────────────────────────────────────────────
     st.divider()
     if len(df_filtered) >= 2:
         st.caption(
