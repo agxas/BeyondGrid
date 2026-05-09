@@ -1697,7 +1697,7 @@ def _call_gemini(api_key: str, prompt: str) -> str:
     """Appel à l'API Gemini 1.5 Flash. Lève une exception en cas d'erreur."""
     url = (
         "https://generativelanguage.googleapis.com/v1beta"
-        f"/models/gemini-1.5-flash:generateContent?key={api_key}"
+        f"/models/gemini-2.5-flash:generateContent?key={api_key}"
     )
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
