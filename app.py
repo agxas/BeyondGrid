@@ -33,12 +33,19 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "4.5"
+APP_VERSION = "4.6"
 PATCH_NOTES = {
+    "4.6": [
+        "Amélioration Analyse IA : prompt enrichi avec la liste complète des actifs détenus (nom, classe, géographie) et les opérations du mois — Gemini contextualise les perfs avec sa connaissance des marchés",
+        "Correctif : modèle Gemini mis à jour → gemini-2.5-flash (seul modèle disponible gratuitement dans AI Studio)",
+        "Correctif : réponse IA coupée en milieu de phrase — maxOutputTokens 1024 → 4096",
+        "Correctif : message d'erreur 429 (quota) plus explicite avec délai conseillé",
+    ],
     "4.5": [
         "Nouveau : page Synthèse mensuelle — sélecteur de mois, évolution de la valeur (début/fin/variation), transactions du mois avec barre de progression DCA, dividendes reçus",
-        "Nouveau : Analyse IA mensuelle via Gemini 1.5 Flash (gratuit) — bouton 'Générer l'analyse' avec résumé personnalisé en français (performance, DCA, dividendes, trajectoire FIRE)",
+        "Nouveau : Analyse IA mensuelle via Gemini (gratuit) — bouton 'Générer l'analyse' avec résumé personnalisé en français (performance, DCA, dividendes, trajectoire FIRE)",
         "Nouveau : champ clé API Gemini dans Saisie manuelle → Paramètres — stockée en base, masquée, résultat mis en cache par session",
+        "Nouveau : colonne gemini_api_key ajoutée dans la table settings (migration : ALTER TABLE settings ADD COLUMN gemini_api_key TEXT)",
     ],
     "4.4": [
         "Refactoring : page_compte() découpée en 3 sous-fonctions (_pc_render_kpis, _pc_render_evolution, _pc_render_details) avec séparateurs visuels",
@@ -1701,7 +1708,7 @@ def _call_gemini(api_key: str, prompt: str) -> str:
     )
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 2048},
+        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 4096},
     }
     resp = requests.post(url, json=payload, timeout=30)
     resp.raise_for_status()
