@@ -39,6 +39,7 @@ PATCH_NOTES = {
         "Nouveau : Date estimée FIRE — calcul exact par formule de valeur future (Vue Globale, section FIRE)",
         "Nouveau : Projection DCA multi-scénarios — pessimiste/neutre/optimiste ±3 % sur un même graphique (Analyses)",
         "Correctif UI : suppression du signe + redondant sur les deltas positifs (la flèche ↑ suffit à indiquer la direction) — affecte tous les KPIs (plus-value, performance, alpha, etc.)",
+        "Correctif calcul : Sharpe ratio — taux sans risque (Livret A) ramené à 365 jours calendaires au lieu de 252 jours de bourse, annualisation corrigée en conséquence",
     ],
     "4.0": [
         "Nouveau : CAGR (rendement annualisé composé) — Vue Globale (4ème KPI perf) et Vue par compte",
@@ -902,9 +903,9 @@ def compute_sharpe(df_snap: pd.DataFrame, risk_free_rate: float) -> float | None
     returns = _build_perf_index(df_snap).pct_change().dropna()
     if len(returns) < 2 or returns.std() == 0:
         return None
-    daily_rf          = risk_free_rate / 252
+    daily_rf          = risk_free_rate / 365
     excess_returns    = returns - daily_rf
-    sharpe_annualized = (excess_returns.mean() / returns.std()) * (252 ** 0.5)
+    sharpe_annualized = (excess_returns.mean() / returns.std()) * (365 ** 0.5)
     return float(sharpe_annualized)
 
 
