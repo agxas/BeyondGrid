@@ -66,6 +66,8 @@ CREATE TABLE public.settings (
 
   pea_targets TEXT,   -- JSON {asset_id: target_pct} — allocations cibles rééquilibrage
 
+  gemini_api_key TEXT,  -- clé API Google Gemini pour l'analyse IA mensuelle
+
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
