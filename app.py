@@ -32,8 +32,15 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "4.3"
+APP_VERSION = "4.4"
 PATCH_NOTES = {
+    "4.4": [
+        "Refactoring : page_compte() découpée en 3 sous-fonctions (_pc_render_kpis, _pc_render_evolution, _pc_render_details) avec séparateurs visuels",
+        "Optimisation : compute_positions_with_pru() appelé une seule fois dans _pc_render_details (positions et allocation partagent le même résultat)",
+        "Refactoring : page_reequilibrage() découpée en 3 sous-fonctions (_rq_render_overview, _rq_render_targets, _rq_render_orders) avec séparateurs visuels",
+        "Thème graphiques : helper _chart_layout() appliqué à tous les graphiques Plotly — cohérence visuelle garantie (perf, drawdown, Livret A, benchmark, DCA, évolution par compte)",
+        "Optimisation cache : fetch_settings, fetch_accounts, fetch_assets passent de ttl=600 à ttl=3600 (1h) — réduit les requêtes Supabase sur les données rarement modifiées",
+    ],
     "4.3": [
         "Refactoring : page_vue_globale() découpée en 5 sous-fonctions (_vg_render_kpis, _vg_render_performance, _vg_render_evolution, _vg_render_fire, _vg_render_portfolio) — fonction principale réduite à ~30 lignes",
         "Refactoring : page_analyses() découpée en 5 sous-fonctions (_an_render_annual_performance, _an_render_risk_metrics, _an_render_comparisons, _an_render_dca, _an_render_dividends) — fonction principale réduite à ~30 lignes",
@@ -258,6 +265,26 @@ def display_kpi(
         delta_color=delta_color,
     )
 
+def _chart_layout(
+    height: int = 380,
+    r: int = 0,
+    t: int = 20,
+    yaxis_suffix: str = " €",
+    yaxis_format: str = ",.0f",
+) -> dict:
+    """Paramètres Plotly communs à tous les graphiques de l'application."""
+    return dict(
+        height=height,
+        margin=dict(l=0, r=r, t=t, b=0),
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        xaxis=dict(showgrid=False),
+        yaxis=dict(ticksuffix=yaxis_suffix, tickformat=yaxis_format, gridcolor="#f0f0f0"),
+        plot_bgcolor="white",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+
+
 def display_kpi_block(
     col,
     label: str,
@@ -361,7 +388,7 @@ def fetch_snapshots_by_account() -> pd.DataFrame:
     return df
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def fetch_settings() -> dict:
     """
     Récupère le singleton settings (id = 1).
@@ -377,7 +404,7 @@ def fetch_settings() -> dict:
     return {}
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def fetch_accounts() -> pd.DataFrame:
     """Lève RuntimeError si Supabase est inaccessible."""
     try:
@@ -387,7 +414,7 @@ def fetch_accounts() -> pd.DataFrame:
     return pd.DataFrame(res.data) if res.data else pd.DataFrame()
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def fetch_assets() -> pd.DataFrame:
     """Lève RuntimeError si Supabase est inaccessible."""
     try:
@@ -780,7 +807,7 @@ def compute_perf_chart(df_snap: pd.DataFrame) -> go.Figure:
     """
     if df_snap.empty or len(df_snap) < 2:
         fig = go.Figure()
-        fig.update_layout(height=400, margin=dict(l=0, r=0, t=30, b=0))
+        fig.update_layout(**_chart_layout(height=400, t=30))
         fig.add_annotation(
             x=0.5, y=0.5, xref="paper", yref="paper",
             text="Données insuffisantes pour afficher le graphique.",
@@ -809,16 +836,7 @@ def compute_perf_chart(df_snap: pd.DataFrame) -> go.Figure:
         fillcolor="rgba(76, 155, 232, 0.15)",
     ))
 
-    fig.update_layout(
-        height=400,
-        margin=dict(l=0, r=0, t=30, b=0),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        hovermode="x unified",
-        xaxis=dict(showgrid=False),
-        yaxis=dict(ticksuffix=" €", tickformat=",.0f", gridcolor="#f0f0f0"),
-        plot_bgcolor="white",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
+    fig.update_layout(**_chart_layout(height=400, t=30))
 
     return fig
 
@@ -837,7 +855,7 @@ def compute_drawdown(
     """
     if df_snap.empty or len(df_snap) < 2:
         fig = go.Figure()
-        fig.update_layout(height=280, margin=dict(l=0, r=0, t=20, b=0))
+        fig.update_layout(**_chart_layout(height=280))
         return fig, 0.0
 
     perf_index = perf_index if perf_index is not None else _build_perf_index(df_snap)
@@ -873,21 +891,7 @@ def compute_drawdown(
         bgcolor="rgba(255,255,255,0.8)",
     )
 
-    fig.update_layout(
-        height=280,
-        margin=dict(l=0, r=0, t=20, b=0),
-        hovermode="x unified",
-        showlegend=True,
-        legend=dict(
-            orientation="h",
-            y=1.02,
-            x=0
-        ),
-        xaxis=dict(showgrid=False),
-        yaxis=dict(ticksuffix=" %", tickformat=".1f", gridcolor="#f0f0f0"),
-        plot_bgcolor="white",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
+    fig.update_layout(**_chart_layout(height=280, yaxis_suffix=" %", yaxis_format=".1f"))
 
     return fig, max_dd
 
@@ -979,16 +983,7 @@ def compute_livret_a_comparison(
         font=dict(color=ecart_color, size=13),
     )
 
-    fig.update_layout(
-        height=380,
-        margin=dict(l=0, r=80, t=20, b=0),
-        hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        xaxis=dict(showgrid=False),
-        yaxis=dict(ticksuffix=" €", tickformat=",.0f", gridcolor="#f0f0f0"),
-        plot_bgcolor="white",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
+    fig.update_layout(**_chart_layout(r=80))
 
     return fig, perf_portef, perf_livret, ecart
 
@@ -1086,16 +1081,7 @@ def compute_benchmark_comparison(
             font=dict(color="#888888", size=12),
         )
 
-    fig.update_layout(
-        height=380,
-        margin=dict(l=0, r=100, t=20, b=0),
-        hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        xaxis=dict(showgrid=False),
-        yaxis=dict(ticksuffix=" %", tickformat=".0f", gridcolor="#f0f0f0"),
-        plot_bgcolor="white",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
+    fig.update_layout(**_chart_layout(r=100, yaxis_suffix=" %", yaxis_format=".0f"))
 
     return fig, perf_portef, perf_bench, ecart
 
@@ -1177,20 +1163,7 @@ def compute_dca_projection(
         hovertemplate="%{y:,.0f} €<extra>Valeur théorique</extra>",
     ))
 
-    fig.update_layout(
-        height=450,
-        margin=dict(l=0, r=0, t=30, b=0),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        hovermode="x unified",
-        xaxis=dict(showgrid=False),
-        yaxis=dict(
-            ticksuffix=" €",
-            tickformat=",.0f",
-            gridcolor="#f0f0f0",
-        ),
-        plot_bgcolor="white",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
+    fig.update_layout(**_chart_layout(height=450, t=30))
 
     return fig, theorique_list, reel_list, capital_list
 
@@ -1265,16 +1238,7 @@ def compute_dca_projection_multi(
             annotation_font_color="#2ECC71",
         )
 
-    fig.update_layout(
-        height=450,
-        margin=dict(l=0, r=0, t=30, b=0),
-        hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        xaxis=dict(showgrid=False),
-        yaxis=dict(ticksuffix=" €", tickformat=",.0f", gridcolor="#f0f0f0"),
-        plot_bgcolor="white",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
+    fig.update_layout(**_chart_layout(height=450, t=30))
 
     return fig, theorique_neutre, reel_neutre, capital_neutre
 
@@ -1951,16 +1915,7 @@ def _vg_render_evolution(df_snap: pd.DataFrame, df_snap_acc: pd.DataFrame) -> No
                     stackgroup="one",
                     hovertemplate=f"{col_name} : %{{y:,.0f}} €<extra></extra>",
                 ))
-            fig_acc.update_layout(
-                height=300,
-                margin=dict(l=0, r=0, t=20, b=0),
-                hovermode="x unified",
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-                xaxis=dict(showgrid=False),
-                yaxis=dict(ticksuffix=" €", tickformat=",.0f", gridcolor="#f0f0f0"),
-                plot_bgcolor="white",
-                paper_bgcolor="rgba(0,0,0,0)",
-            )
+            fig_acc.update_layout(**_chart_layout(height=300))
             st.plotly_chart(fig_acc, use_container_width=True)
 
 
@@ -2395,6 +2350,120 @@ def page_analyses():
         )
 
 
+def _pc_render_kpis(
+    df_snap_one: pd.DataFrame,
+    acc_type: str,
+    div_acc: dict,
+) -> float:
+    """KPIs + barre plafond PEA. Retourne total_value pour les onglets."""
+    latest           = df_snap_one.iloc[-1]
+    total_value      = float(latest["total_value"])
+    invested_capital = float(latest["invested_capital"])
+    plus_value       = total_value - invested_capital
+    perf_pct         = (plus_value / invested_capital * 100) if invested_capital > 0 else 0.0
+
+    total_div        = div_acc["total"] if not div_acc.get("empty") else 0.0
+    total_return     = plus_value + total_div
+    total_return_pct = (total_return / invested_capital * 100) if invested_capital > 0 else 0.0
+
+    col1, col2, col3, col4 = st.columns(4)
+    display_kpi_block(col1, "Valeur totale",   fmt_eur(total_value))
+    display_kpi_block(col2, "Capital investi", fmt_eur(invested_capital))
+
+    pv_subline = (
+        f"Total return (÷ dividendes) : {fmt_eur(total_return)} · {total_return_pct:+.2f} %"
+        if total_div > 0 else None
+    )
+    display_kpi_block(col3, "Plus-value latente", fmt_eur(plus_value),
+                      perf_pct, is_percent=True, subline=pv_subline)
+
+    cagr_acc = compute_cagr(df_snap_one)
+    display_kpi_block(col4, "CAGR (depuis le début)",
+                      fmt_pct(cagr_acc) if cagr_acc is not None else "—")
+
+    if acc_type == "PEA" and invested_capital > 0:
+        pea_pct = min(invested_capital / PEA_PLAFOND * 100, 100.0)
+        color   = "🟢" if pea_pct < 75 else ("🟡" if pea_pct < 95 else "🔴")
+        st.progress(
+            pea_pct / 100,
+            text=(
+                f"{color} Plafond PEA : {fmt_eur(invested_capital)} versés "
+                f"/ {fmt_eur(PEA_PLAFOND)} ({pea_pct:.1f} %)"
+            ),
+        )
+
+    return total_value
+
+
+def _pc_render_evolution(df_snap_one: pd.DataFrame) -> None:
+    """Sélecteur de période + graphique d'évolution valeur/capital."""
+    st.subheader("📈 Évolution")
+
+    col_period, _ = st.columns([2, 5])
+    with col_period:
+        periode = st.selectbox(
+            "Période",
+            options=PERIODE_OPTIONS,
+            index=PERIODE_OPTIONS.index(PERIODE_DEFAULT),
+            label_visibility="collapsed",
+            key="compte_periode",
+        )
+
+    df_filtered = filter_by_period(df_snap_one, periode)
+
+    if len(df_filtered) >= 2:
+        idx         = _build_perf_index(df_filtered)
+        perf_period = (idx.iloc[-1] - 1) * 100
+        col_p1, col_p2, _ = st.columns([1, 1, 4])
+        display_kpi_block(col_p1, f"Perf ({periode})", fmt_pct(perf_period))
+        display_kpi_block(col_p2, "Nb snapshots", str(len(df_filtered)))
+
+    st.plotly_chart(compute_perf_chart(df_filtered), use_container_width=True)
+
+
+def _pc_render_details(
+    df_txn_acc: pd.DataFrame,
+    df_assets: pd.DataFrame,
+    div_acc: dict,
+    total_value: float,
+) -> None:
+    """Onglets Positions / Allocation / Dividendes. compute_positions_with_pru appelé une fois."""
+    st.subheader("📋 Détails")
+    tab_pos, tab_alloc, tab_div = st.tabs(["📋 Positions", "📊 Allocation", "💰 Dividendes"])
+
+    df_pos     = compute_positions_with_pru(df_txn_acc, df_assets)
+    by_ttm_acc = div_acc.get("by_asset_ttm", {}) if not div_acc.get("empty") else {}
+
+    with tab_pos:
+        render_positions_table(df_pos, by_asset_ttm=by_ttm_acc, label_capital="Capital investi")
+
+    with tab_alloc:
+        if not df_pos.empty:
+            col_a, col_b = st.columns(2)
+            render_allocation_charts(df_pos, col_a, col_b)
+        else:
+            st.info("Aucune position détectée.")
+
+    with tab_div:
+        if div_acc.get("empty"):
+            st.info("Aucun dividende enregistré pour ce compte.")
+        else:
+            yield_acc = div_acc["ttm"] / total_value * 100 if total_value > 0 else 0.0
+            c1, c2, c3, c4 = st.columns(4)
+            display_kpi_block(c1, "Total reçu",           fmt_eur(div_acc["total"]))
+            display_kpi_block(c2, "Reçu cette année",     fmt_eur(div_acc["ytd"]))
+            display_kpi_block(c3, "Rendement TTM",        f"{yield_acc:.2f} %")
+            display_kpi_block(c4, "Nombre de versements", str(div_acc["nb"]))
+
+            col_l, col_r = st.columns(2)
+            with col_l:
+                st.caption("Par source")
+                st.plotly_chart(div_acc["fig_asset"], use_container_width=True)
+            with col_r:
+                st.caption("Par année")
+                st.plotly_chart(div_acc["fig_year"],  use_container_width=True)
+
+
 def page_compte():
     st.title("🏦 Vue par compte")
     _set_page_title("Vue par compte")
@@ -2413,7 +2482,6 @@ def page_compte():
         st.warning("Aucun compte actif.")
         return
 
-    # ── Sélecteur de compte ────────────────────────────────────────
     account_id = st.selectbox(
         "Compte",
         options=df_accounts["id"].tolist(),
@@ -2426,7 +2494,6 @@ def page_compte():
 
     st.caption(f"Enveloppe : **{acc_type}**")
 
-    # ── Filtrer les données sur ce compte ─────────────────────────
     df_txn_acc  = df_txn[df_txn["account_id"] == account_id]
     df_snap_one = (
         df_snap_acc[df_snap_acc["account_name"] == acc_name]
@@ -2438,163 +2505,27 @@ def page_compte():
         st.info("Aucun snapshot pour ce compte — relance un snapshot pour commencer.")
         return
 
-    # ── KPIs principaux ────────────────────────────────────────────
-    latest           = df_snap_one.iloc[-1]
-    total_value      = float(latest["total_value"])
-    invested_capital = float(latest["invested_capital"])
-    plus_value       = total_value - invested_capital
-    perf_pct         = (plus_value / invested_capital * 100) if invested_capital > 0 else 0.0
+    div_acc     = compute_dividends(df_txn_acc, df_assets)
+    total_value = _pc_render_kpis(df_snap_one, acc_type, div_acc)
+    st.divider()
+    _pc_render_evolution(df_snap_one)
+    st.divider()
+    _pc_render_details(df_txn_acc, df_assets, div_acc, total_value)
 
-    div_acc          = compute_dividends(df_txn_acc, df_assets)
-    total_div        = div_acc["total"] if not div_acc.get("empty") else 0.0
-    total_return     = plus_value + total_div
-    total_return_pct = (total_return / invested_capital * 100) if invested_capital > 0 else 0.0
-
-    col1, col2, col3, col4 = st.columns(4)
-    display_kpi_block(col1, "Valeur totale",    fmt_eur(total_value))
-    display_kpi_block(col2, "Capital investi",  fmt_eur(invested_capital))
-
-    pv_subline = (
-        f"Total return (÷ dividendes) : {fmt_eur(total_return)} · {total_return_pct:+.2f} %"
-        if total_div > 0 else None
-    )
-    display_kpi_block(col3, "Plus-value latente", fmt_eur(plus_value),
-                      perf_pct, is_percent=True, subline=pv_subline)
-
-    cagr_acc = compute_cagr(df_snap_one)
-    display_kpi_block(col4, "CAGR (depuis le début)",
-                      fmt_pct(cagr_acc) if cagr_acc is not None else "—")
-
-    # ── Plafond légal PEA ─────────────────────────────────────
-    if acc_type == "PEA" and invested_capital > 0:
-        pea_pct = min(invested_capital / PEA_PLAFOND * 100, 100.0)
-        color   = "🟢" if pea_pct < 75 else ("🟡" if pea_pct < 95 else "🔴")
-        st.progress(
-            pea_pct / 100,
-            text=(
-                f"{color} Plafond PEA : {fmt_eur(invested_capital)} versés "
-                f"/ {fmt_eur(PEA_PLAFOND)} ({pea_pct:.1f} %)"
-            ),
-        )
-
-    # ── Évolution ──────────────────────────────────────────────────
-    st.subheader("📈 Évolution")
-
-    col_period, _ = st.columns([2, 5])
-    with col_period:
-        periode = st.selectbox(
-            "Période",
-            options=PERIODE_OPTIONS,
-            index=PERIODE_OPTIONS.index(PERIODE_DEFAULT),
-            label_visibility="collapsed",
-            key="compte_periode",
-        )
-
-    df_filtered = filter_by_period(df_snap_one, periode)
-
-    if len(df_filtered) >= 2:
-        # Perfs sur la période
-        idx         = _build_perf_index(df_filtered)
-        perf_period = (idx.iloc[-1] - 1) * 100
-
-        col_p1, col_p2, _ = st.columns([1, 1, 4])
-        display_kpi_block(col_p1, f"Perf ({periode})", fmt_pct(perf_period))
-        display_kpi_block(col_p2, "Nb snapshots", str(len(df_filtered)))
-
-    st.plotly_chart(compute_perf_chart(df_filtered), use_container_width=True)
-
-    # ── Tabs : Positions / Allocation / Dividendes ─────────────────
-    st.subheader("📋 Détails")
-    tab_pos, tab_alloc, tab_div = st.tabs(["📋 Positions", "📊 Allocation", "💰 Dividendes"])
-
-    with tab_pos:
-        df_pos = compute_positions_with_pru(df_txn_acc, df_assets)
-        by_ttm_acc = div_acc.get("by_asset_ttm", {}) if not div_acc.get("empty") else {}
-        render_positions_table(
-            df_pos,
-            by_asset_ttm=by_ttm_acc,
-            label_capital="Capital investi",
-        )
-
-    with tab_alloc:
-        df_pos_alloc = compute_positions_with_pru(df_txn_acc, df_assets)
-        if not df_pos_alloc.empty:
-            col_a, col_b = st.columns(2)
-            render_allocation_charts(df_pos_alloc, col_a, col_b)
-        else:
-            st.info("Aucune position détectée.")
-
-    with tab_div:
-        if div_acc.get("empty"):
-            st.info("Aucun dividende enregistré pour ce compte.")
-        else:
-            yield_acc = (
-                div_acc["ttm"] / total_value * 100
-                if total_value > 0 else 0.0
-            )
-            c1, c2, c3, c4 = st.columns(4)
-            display_kpi_block(c1, "Total reçu",           fmt_eur(div_acc["total"]))
-            display_kpi_block(c2, "Reçu cette année",     fmt_eur(div_acc["ytd"]))
-            display_kpi_block(c3, "Rendement TTM",        f"{yield_acc:.2f} %")
-            display_kpi_block(c4, "Nombre de versements", str(div_acc["nb"]))
-
-            col_l, col_r = st.columns(2)
-            with col_l:
-                st.caption("Par source")
-                st.plotly_chart(div_acc["fig_asset"], use_container_width=True)
-            with col_r:
-                st.caption("Par année")
-                st.plotly_chart(div_acc["fig_year"],  use_container_width=True)
-
-    # ── Footer ─────────────────────────────────────────────────────
     st.caption(
         f"Dernière donnée : {df_snap_one.iloc[-1]['date'].strftime('%d/%m/%Y')} "
         f"· {len(df_snap_one)} snapshot(s)"
     )
 
 
-def page_reequilibrage():
-    st.title("⚖️ Rééquilibrage PEA")
-    _set_page_title("Rééquilibrage PEA")
-
-    # ── Chargement des données ──────────────────────────────────
-    try:
-        settings      = fetch_settings()
-        df_accounts   = fetch_accounts()
-        df_assets     = fetch_assets()
-        df_txn        = fetch_transactions()
-    except RuntimeError as e:
-        st.error(f"❌ Base de données inaccessible — {e}")
-        st.stop()
-
-    dca_amount    = float(settings.get("monthly_dca") or 0)
-
-    # Compte PEA
-    pea_accounts  = df_accounts[df_accounts["type"] == "PEA"]
-
-    if pea_accounts.empty:
-        st.warning("Aucun compte de type PEA trouvé dans la base.")
-        return
-
-    pea_account   = pea_accounts.iloc[0]
-    pea_id        = int(pea_account["id"])
-
-    # Positions actuelles
-    df_positions = compute_pea_positions(df_txn, df_assets, pea_id)
-
-    if df_positions.empty:
-        st.warning("Aucune position trouvée sur le PEA. Vérifie tes transactions.")
-        return
-
-    # Garde DCA avant tout rendu
-    if dca_amount == 0:
-        st.info("Définis ton DCA mensuel dans **Saisie manuelle** pour utiliser cette page.")
-        return
-
-    total_pea = df_positions["value"].sum()
-
-    st.divider()
+def _rq_render_overview(
+    df_positions: pd.DataFrame,
+    dca_amount: float,
+    capital_pea: float,
+) -> None:
+    """Graphiques d'allocation + métriques + barre plafond PEA."""
     st.subheader("📊 Répartition du portefeuille")
+    total_pea = df_positions["value"].sum()
 
     col1, col2 = st.columns(2)
     render_allocation_charts(df_positions, col1, col2)
@@ -2603,12 +2534,6 @@ def page_reequilibrage():
     col_a.metric("Valeur totale PEA", fmt_eur(total_pea))
     col_b.metric("DCA mensuel (settings)", fmt_eur(dca_amount))
 
-    # ── Plafond PEA ────────────────────────────────────────────
-    df_pru = compute_positions_with_pru(
-        df_txn[df_txn["account_id"] == pea_id].reset_index(drop=True),
-        df_assets,
-    )
-    capital_pea = df_pru["invested"].sum() if not df_pru.empty else 0.0
     if capital_pea > 0:
         pea_pct = min(capital_pea / PEA_PLAFOND * 100, 100.0)
         color   = "🟢" if pea_pct < 75 else ("🟡" if pea_pct < 95 else "🔴")
@@ -2620,13 +2545,16 @@ def page_reequilibrage():
             ),
         )
 
-    st.divider()
 
-    # ── Saisie des allocations cibles ──────────────────────────
+def _rq_render_targets(
+    df_positions: pd.DataFrame,
+    settings: dict,
+    total_pea: float,
+) -> tuple[dict, float]:
+    """Formulaire des allocations cibles + bouton sauvegarde. Retourne (targets, total_cible)."""
     st.subheader("🎯 Allocations cibles")
     st.caption("Renseigne le pourcentage cible pour chaque ligne. Le total doit faire 100 %.")
 
-    # Charger les cibles sauvegardées en base (persistance fiable)
     saved_raw = settings.get("pea_targets") or "{}"
     try:
         saved_targets = json.loads(saved_raw)
@@ -2636,12 +2564,9 @@ def page_reequilibrage():
     targets     = {}
     total_cible = 0.0
 
-    # Formulaire par asset
     for _, row in df_positions.iterrows():
         aid          = str(int(row["asset_id"]))
         poids_actuel = row["value"] / total_pea * 100
-
-        # Cible : valeur sauvegardée en DB si disponible, sinon poids actuel arrondi
         default_cible = float(saved_targets.get(aid, round(poids_actuel)))
 
         col_name, col_actuel, col_cible = st.columns([3, 1, 1])
@@ -2660,7 +2585,6 @@ def page_reequilibrage():
         targets[aid] = cible
         total_cible += cible
 
-    # Indicateur du total + bouton de sauvegarde
     col_total, col_save = st.columns([3, 2])
     with col_total:
         if abs(total_cible - 100) < 0.1:
@@ -2673,107 +2597,139 @@ def page_reequilibrage():
                      help="Sauvegarde en base — persistant entre les sessions"):
             try:
                 supabase.table("settings").upsert({
-                    "id":           1,
-                    "pea_targets":  json.dumps(targets),
-                    "updated_at":   pd.Timestamp.now(tz="UTC").isoformat(),
+                    "id":          1,
+                    "pea_targets": json.dumps(targets),
+                    "updated_at":  pd.Timestamp.now(tz="UTC").isoformat(),
                 }).execute()
                 fetch_settings.clear()
                 st.success("✅ Allocations cibles enregistrées.")
             except Exception as e:
                 st.error(f"❌ Erreur lors de la sauvegarde : {e}")
 
+    return targets, total_cible
+
+
+def _rq_render_orders(
+    df_positions: pd.DataFrame,
+    targets: dict,
+    dca_amount: float,
+) -> None:
+    """Tableau de situation, warnings et récap des ordres."""
+    df_summary, orders, warnings_list = compute_rebalancing_orders(
+        df_positions, targets, dca_amount
+    )
+
+    st.subheader("📊 Situation actuelle vs cible")
+
+    def color_ecart(val):
+        if val > 0.5:
+            return "color: #2ECC71"
+        elif val < -0.5:
+            return "color: #E84C4C"
+        return "color: #888888"
+
+    df_display = df_summary[["name", "value", "poids_pct", "cible_pct", "ecart_pct"]].copy()
+    df_display.columns = ["Asset", "Valeur (€)", "Actuel %", "Cible %", "Écart %"]
+    df_display["Valeur (€)"] = df_display["Valeur (€)"].map(fmt_eur)
+
+    st.dataframe(
+        df_display.style.map(color_ecart, subset=["Écart %"]),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    for w in warnings_list:
+        if w.startswith("✅"):
+            st.success(w)
+        elif w.startswith("⚠️"):
+            st.warning(w)
+        elif w.startswith("ℹ️"):
+            st.info(w)
+
+    if not orders:
+        return
+
+    st.subheader("🛒 Ordres à passer sur Trade Republic")
+    st.markdown("### 👉 Ce mois-ci, saisis :")
+
+    cols = st.columns(len(orders))
+    for i, order in enumerate(orders):
+        cols[i].metric(
+            order["name"],
+            f"{order['a_saisir']} €",
+            f"{order['nb_titres']} titre(s) × {order['prix']:.2f} €",
+            delta_color="off",
+        )
+
+    with st.expander("📋 Détail des ordres"):
+        df_orders = pd.DataFrame(orders)[["name", "nb_titres", "prix", "montant_reel", "a_saisir"]]
+        df_orders.columns = ["Asset", "Titres", "Prix unitaire", "Montant réel", "À saisir (TR)"]
+        df_orders["Prix unitaire"] = df_orders["Prix unitaire"].map(lambda x: f"{x:.2f} €")
+        df_orders["Montant réel"]  = df_orders["Montant réel"].map(
+            lambda x: f"{x:,.2f} €".replace(",", " ")
+        )
+        df_orders["À saisir (TR)"] = df_orders["À saisir (TR)"].map(lambda x: f"{x} €")
+        st.dataframe(df_orders, use_container_width=True, hide_index=True)
+
+    total_reel   = sum(o["montant_reel"] for o in orders)
+    total_saisir = sum(o["a_saisir"] for o in orders)
+
     st.divider()
+    col1, col2, col3 = st.columns(3)
+    col1.metric("DCA disponible", fmt_eur(dca_amount))
+    col2.metric("Total réellement investi", f"{total_reel:,.2f} €".replace(",", " "))
+    col3.metric(
+        "Total à saisir sur TR",
+        f"{total_saisir} €",
+        f"Marge : +{total_saisir - total_reel:.2f} €",
+        delta_color="off",
+    )
 
-    # ── Calcul ─────────────────────────────────────────────────
+
+def page_reequilibrage():
+    st.title("⚖️ Rééquilibrage PEA")
+    _set_page_title("Rééquilibrage PEA")
+
+    try:
+        settings    = fetch_settings()
+        df_accounts = fetch_accounts()
+        df_assets   = fetch_assets()
+        df_txn      = fetch_transactions()
+    except RuntimeError as e:
+        st.error(f"❌ Base de données inaccessible — {e}")
+        st.stop()
+
+    dca_amount   = float(settings.get("monthly_dca") or 0)
+    pea_accounts = df_accounts[df_accounts["type"] == "PEA"]
+
+    if pea_accounts.empty:
+        st.warning("Aucun compte de type PEA trouvé dans la base.")
+        return
+
+    pea_id       = int(pea_accounts.iloc[0]["id"])
+    df_positions = compute_pea_positions(df_txn, df_assets, pea_id)
+
+    if df_positions.empty:
+        st.warning("Aucune position trouvée sur le PEA. Vérifie tes transactions.")
+        return
+
+    if dca_amount == 0:
+        st.info("Définis ton DCA mensuel dans **Saisie manuelle** pour utiliser cette page.")
+        return
+
+    df_pru      = compute_positions_with_pru(
+        df_txn[df_txn["account_id"] == pea_id].reset_index(drop=True), df_assets
+    )
+    capital_pea = df_pru["invested"].sum() if not df_pru.empty else 0.0
+    total_pea   = df_positions["value"].sum()
+
+    st.divider()
+    _rq_render_overview(df_positions, dca_amount, capital_pea)
+    st.divider()
+    targets, total_cible = _rq_render_targets(df_positions, settings, total_pea)
+    st.divider()
     if abs(total_cible - 100) < 0.1:
-
-        df_summary, orders, warnings_list = compute_rebalancing_orders(
-            df_positions, targets, dca_amount
-        )
-
-        # ── Tableau de situation ────────────────────────────────
-        st.subheader("📊 Situation actuelle vs cible")
-
-        def color_ecart(val):
-            if val > 0.5:
-                return "color: #2ECC71"   # sous-pondéré → vert (à acheter)
-            elif val < -0.5:
-                return "color: #E84C4C"   # sur-pondéré → rouge
-            return "color: #888888"
-
-        df_display = df_summary[[
-            "name", "value", "poids_pct", "cible_pct", "ecart_pct"
-        ]].copy()
-        df_display.columns = ["Asset", "Valeur (€)", "Actuel %", "Cible %", "Écart %"]
-        df_display["Valeur (€)"] = df_display["Valeur (€)"].map(fmt_eur)
-
-        st.dataframe(
-            df_display.style.map(color_ecart, subset=["Écart %"]),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-        # ── Warnings ───────────────────────────────────────────
-        for w in warnings_list:
-            if w.startswith("✅"):
-                st.success(w)
-            elif w.startswith("⚠️"):
-                st.warning(w)
-            elif w.startswith("ℹ️"):
-                st.info(w)
-
-        # ── Récap des ordres ───────────────────────────────────
-        if orders:
-            st.subheader("🛒 Ordres à passer sur Trade Republic")
-
-            # Récap visuel principal
-            st.markdown("### 👉 Ce mois-ci, saisis :")
-
-            cols = st.columns(len(orders))
-            for i, order in enumerate(orders):
-                cols[i].metric(
-                    order["name"],
-                    f"{order['a_saisir']} €",
-                    f"{order['nb_titres']} titre(s) × {order['prix']:.2f} €",
-                    delta_color="off",
-                )
-
-            # Tableau détaillé
-            with st.expander("📋 Détail des ordres"):
-                df_orders = pd.DataFrame(orders)[[
-                    "name", "nb_titres", "prix", "montant_reel", "a_saisir"
-                ]]
-                df_orders.columns = [
-                    "Asset", "Titres", "Prix unitaire", "Montant réel", "À saisir (TR)"
-                ]
-                df_orders["Prix unitaire"] = df_orders["Prix unitaire"].map(
-                    lambda x: f"{x:.2f} €"
-                )
-                df_orders["Montant réel"] = df_orders["Montant réel"].map(
-                    lambda x: f"{x:,.2f} €".replace(",", " ")
-                )
-                df_orders["À saisir (TR)"] = df_orders["À saisir (TR)"].map(
-                    lambda x: f"{x} €"
-                )
-                st.dataframe(df_orders, use_container_width=True, hide_index=True)
-
-            # Récap financier
-            total_reel   = sum(o["montant_reel"] for o in orders)
-            total_saisir = sum(o["a_saisir"] for o in orders)
-
-            st.divider()
-            col1, col2, col3 = st.columns(3)
-            col1.metric("DCA disponible", fmt_eur(dca_amount))
-            col2.metric(
-                "Total réellement investi",
-                f"{total_reel:,.2f} €".replace(",", " "),
-            )
-            col3.metric(
-                "Total à saisir sur TR",
-                f"{total_saisir} €",
-                f"Marge : +{total_saisir - total_reel:.2f} €",
-                delta_color="off",
-            )
+        _rq_render_orders(df_positions, targets, dca_amount)
 
 
 def page_saisie():
