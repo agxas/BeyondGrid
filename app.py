@@ -32,8 +32,12 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "4.4"
+APP_VERSION = "4.5"
 PATCH_NOTES = {
+    "4.5": [
+        "Nouveau : page Synthèse mensuelle — sélecteur de mois, évolution de la valeur (début/fin/variation), transactions du mois avec barre de progression DCA, dividendes reçus",
+        "Nouveau : placeholder Analyse IA — section prête à accueillir une analyse Claude dès qu'une clé API sera configurée",
+    ],
     "4.4": [
         "Refactoring : page_compte() découpée en 3 sous-fonctions (_pc_render_kpis, _pc_render_evolution, _pc_render_details) avec séparateurs visuels",
         "Optimisation : compute_positions_with_pru() appelé une seule fois dans _pc_render_details (positions et allocation partagent le même résultat)",
@@ -2732,6 +2736,174 @@ def page_reequilibrage():
         _rq_render_orders(df_positions, targets, dca_amount)
 
 
+def page_synthese_mensuelle():
+    st.title("📅 Synthèse mensuelle")
+    _set_page_title("Synthèse mensuelle")
+
+    try:
+        with st.spinner("Chargement des données..."):
+            df_snap   = fetch_snapshots_agg()
+            df_txn    = fetch_transactions()
+            df_assets = fetch_assets()
+            settings  = fetch_settings()
+    except RuntimeError as e:
+        st.error(f"❌ Base de données inaccessible — {e}")
+        st.stop()
+
+    if df_snap.empty:
+        st.info("Aucune donnée disponible — enregistre au moins un snapshot pour commencer.")
+        return
+
+    MOIS_FR = {
+        1: "Janvier", 2: "Février", 3: "Mars", 4: "Avril",
+        5: "Mai", 6: "Juin", 7: "Juillet", 8: "Août",
+        9: "Septembre", 10: "Octobre", 11: "Novembre", 12: "Décembre",
+    }
+
+    today      = pd.Timestamp.today().normalize()
+    first_snap = df_snap["date"].min().replace(day=1)
+    months     = [
+        (today - pd.DateOffset(months=i)).replace(day=1)
+        for i in range(12)
+        if (today - pd.DateOffset(months=i)).replace(day=1) >= first_snap
+    ]
+
+    if not months:
+        st.info("Pas encore assez de données pour afficher une synthèse mensuelle.")
+        return
+
+    col_sel, _ = st.columns([2, 5])
+    with col_sel:
+        selected = st.selectbox(
+            "Mois",
+            options=months,
+            format_func=lambda m: f"{MOIS_FR[m.month]} {m.year}",
+            label_visibility="collapsed",
+        )
+
+    month_start = pd.Timestamp(selected)
+    month_end   = (month_start + pd.DateOffset(months=1)) - pd.Timedelta(days=1)
+
+    df_before = df_snap[df_snap["date"] < month_start].sort_values("date")
+    df_during = df_snap[
+        (df_snap["date"] >= month_start) & (df_snap["date"] <= month_end)
+    ].sort_values("date")
+
+    if df_during.empty:
+        st.warning("Aucun snapshot enregistré pour ce mois.")
+        return
+
+    val_start = float(df_before.iloc[-1]["total_value"]) if not df_before.empty else None
+    val_end   = float(df_during.iloc[-1]["total_value"])
+    nb_snaps  = len(df_during)
+    last_date = df_during.iloc[-1]["date"].strftime("%d/%m/%Y")
+
+    # ── Évolution du portefeuille ──────────────────────────────
+    st.divider()
+    st.subheader("📈 Évolution du portefeuille")
+
+    variation_eur = (val_end - val_start) if val_start is not None else None
+    variation_pct = (variation_eur / val_start * 100) if val_start else None
+
+    col1, col2, col3, col4 = st.columns(4)
+    display_kpi_block(col1, "Valeur début de mois", fmt_eur(val_start) if val_start else "—")
+    display_kpi_block(col2, "Valeur fin de mois",   fmt_eur(val_end))
+    display_kpi_block(
+        col3, "Variation €",
+        fmt_eur(variation_eur) if variation_eur is not None else "—",
+        delta=variation_eur, is_percent=False,
+    )
+    display_kpi_block(
+        col4, "Performance",
+        fmt_pct(variation_pct) if variation_pct is not None else "—",
+        delta=variation_pct, is_percent=True,
+    )
+
+    # ── Transactions du mois ──────────────────────────────────
+    st.divider()
+    st.subheader("📋 Transactions du mois")
+
+    TYPE_LABELS = {"buy": "Achat", "sell": "Vente", "dividend": "Dividende", "fee": "Frais"}
+    asset_map   = df_assets.set_index("id")["name"].to_dict()
+
+    df_txn_month = df_txn[
+        (df_txn["date"] >= month_start) & (df_txn["date"] <= month_end)
+    ].copy()
+
+    if df_txn_month.empty:
+        st.info("Aucune transaction enregistrée ce mois.")
+    else:
+        df_txn_month["asset_name"] = df_txn_month["asset_id"].map(asset_map).fillna("—")
+        df_txn_month["type_label"] = df_txn_month["type"].map(TYPE_LABELS).fillna(df_txn_month["type"])
+
+        df_display = df_txn_month[["date", "type_label", "asset_name", "total_amount"]].copy()
+        df_display = df_display.sort_values("date")
+        df_display["date"]         = df_display["date"].dt.strftime("%d/%m/%Y")
+        df_display["total_amount"] = df_display["total_amount"].map(fmt_eur)
+        df_display.columns         = ["Date", "Type", "Asset", "Montant"]
+        st.dataframe(df_display, use_container_width=True, hide_index=True)
+
+    # Barre DCA
+    dca_target    = float(settings.get("monthly_dca") or 0)
+    invested_month = abs(
+        df_txn[
+            (df_txn["date"] >= month_start) & (df_txn["date"] <= month_end) &
+            (df_txn["type"] == "buy")
+        ]["total_amount"].sum()
+    )
+    if dca_target > 0:
+        dca_pct = min(invested_month / dca_target, 1.0)
+        color   = "🟢" if dca_pct >= 0.95 else ("🟡" if dca_pct >= 0.5 else "🔴")
+        st.progress(
+            dca_pct,
+            text=(
+                f"{color} DCA : {fmt_eur(invested_month)} investis "
+                f"/ objectif {fmt_eur(dca_target)} ({dca_pct * 100:.0f} %)"
+            ),
+        )
+
+    # ── Dividendes du mois ────────────────────────────────────
+    st.divider()
+    st.subheader("💰 Dividendes reçus")
+
+    df_div_month = df_txn[
+        (df_txn["date"] >= month_start) & (df_txn["date"] <= month_end) &
+        (df_txn["type"] == "dividend")
+    ].copy()
+
+    if df_div_month.empty:
+        st.info("Aucun dividende reçu ce mois.")
+    else:
+        df_div_month["asset_name"] = df_div_month["asset_id"].map(asset_map).fillna("—")
+        total_div = float(df_div_month["total_amount"].sum())
+
+        col_d1, col_d2, _ = st.columns([1, 1, 3])
+        display_kpi_block(col_d1, "Total dividendes", fmt_eur(total_div))
+        display_kpi_block(col_d2, "Versements",        str(len(df_div_month)))
+
+        by_asset = (
+            df_div_month.groupby("asset_name")["total_amount"]
+            .sum()
+            .reset_index()
+            .sort_values("total_amount", ascending=False)
+        )
+        by_asset["total_amount"] = by_asset["total_amount"].map(fmt_eur)
+        by_asset.columns = ["Asset", "Montant"]
+        st.dataframe(by_asset, use_container_width=True, hide_index=True)
+
+    # ── Analyse IA ────────────────────────────────────────────
+    st.divider()
+    st.subheader("🤖 Analyse IA")
+    st.info(
+        "**Fonctionnalité à venir** — Configure une clé API Anthropic dans les paramètres "
+        "pour obtenir une analyse personnalisée de ton mois : points forts, points de "
+        "vigilance et cohérence avec ta stratégie FIRE.",
+        icon="🔑",
+    )
+
+    st.caption(f"Données au {last_date} · {nb_snaps} snapshot(s) ce mois")
+
+
 def page_saisie():
     st.title("✍️ Saisie manuelle")
     _set_page_title("Saisie manuelle")
@@ -3296,6 +3468,7 @@ menu = st.sidebar.radio(
         "Vue Globale",
         "Vue par compte",
         "Analyses & Graphiques",
+        "Synthèse mensuelle",
         "Rééquilibrage PEA",
         "Saisie manuelle",
         "Transactions",
@@ -3304,6 +3477,7 @@ menu = st.sidebar.radio(
         "Vue Globale":           "🏠 Vue Globale",
         "Vue par compte":        "🏦 Vue par compte",
         "Analyses & Graphiques": "📊 Analyses",
+        "Synthèse mensuelle":    "📅 Synthèse mensuelle",
         "Rééquilibrage PEA":     "⚖️ Rééquilibrage PEA",
         "Saisie manuelle":       "✍️ Saisie manuelle",
         "Transactions":          "🧾 Transactions",
@@ -3316,6 +3490,8 @@ elif menu == "Vue par compte":
     page_compte()
 elif menu == "Analyses & Graphiques":
     page_analyses()
+elif menu == "Synthèse mensuelle":
+    page_synthese_mensuelle()
 elif menu == "Rééquilibrage PEA":
     page_reequilibrage()
 elif menu == "Saisie manuelle":
