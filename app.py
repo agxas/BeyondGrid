@@ -3450,16 +3450,17 @@ def page_saisie():
                 df_csv = pd.DataFrame()
 
             if not df_csv.empty:
-                # Filter only BUY trading rows
+                # Filter TRADING rows: BUY, SELL, DIVIDEND
+                TR_TYPE_MAP = {"BUY": "buy", "SELL": "sell", "DIVIDEND": "dividend"}
                 mask = (
                     df_csv.get("category", pd.Series(dtype=str)).str.upper() == "TRADING"
                 ) & (
-                    df_csv.get("type", pd.Series(dtype=str)).str.upper() == "BUY"
+                    df_csv.get("type", pd.Series(dtype=str)).str.upper().isin(TR_TYPE_MAP)
                 )
-                df_buys = df_csv[mask].copy()
+                df_importable = df_csv[mask].copy()
 
-                if df_buys.empty:
-                    st.info("Aucune ligne d'achat (TRADING/BUY) trouvée dans ce fichier.")
+                if df_importable.empty:
+                    st.info("Aucune ligne importable (TRADING/BUY|SELL|DIVIDEND) trouvée dans ce fichier.")
                 else:
                     # Build ISIN → asset_id lookup
                     isin_to_asset = {}
@@ -3472,7 +3473,7 @@ def page_saisie():
                                 }
 
                     # Account mapping selectors
-                    tr_account_types = df_buys["account_type"].dropna().str.upper().unique().tolist()
+                    tr_account_types = df_importable["account_type"].dropna().str.upper().unique().tolist()
                     acc_options      = df_accounts["id"].tolist() if not df_accounts.empty else []
                     acc_labels       = {row["id"]: row["name"] for _, row in df_accounts.iterrows()} if not df_accounts.empty else {}
 
@@ -3480,7 +3481,6 @@ def page_saisie():
                     mapping_cols = st.columns(len(tr_account_types)) if tr_account_types else []
                     acc_type_map: dict[str, int] = {}
 
-                    # Default guesses: PEA → first PEA account, DEFAULT → first non-PEA account
                     def _guess_account(tr_type: str) -> int | None:
                         for _, arow in df_accounts.iterrows():
                             atype = (arow.get("type") or "").upper()
@@ -3513,16 +3513,18 @@ def page_saisie():
                                 key = f"{date_part}_{int(txrow['asset_id'])}"
                                 existing_keys.add(key)
 
-                    # Parse each BUY row
+                    # Parse each importable row
                     rows_preview = []
-                    for _, r in df_buys.iterrows():
+                    for _, r in df_importable.iterrows():
+                        tr_type_raw = (r.get("type") or "").strip().upper()
+                        bg_type    = TR_TYPE_MAP.get(tr_type_raw, "buy")
                         isin       = (r.get("symbol") or "").strip()
                         acc_type   = (r.get("account_type") or "DEFAULT").upper()
                         date_str   = (r.get("date") or "").strip()
-                        shares_str = (r.get("shares") or "0").strip()
-                        price_str  = (r.get("price") or "0").strip()
+                        shares_str = (r.get("shares") or "").strip()
+                        price_str  = (r.get("price") or "").strip()
                         amount_str = (r.get("amount") or "0").strip()
-                        fee_str    = (r.get("fee") or "0").strip()
+                        fee_str    = (r.get("fee") or "").strip()
                         tr_id      = (r.get("transaction_id") or "").strip()
                         name_tr    = (r.get("name") or "").strip()
 
@@ -3530,12 +3532,13 @@ def page_saisie():
                         account_id = acc_type_map.get(acc_type)
 
                         try:
-                            qty        = round(float(shares_str), 8)
-                            unit_price = round(float(price_str), 6)
+                            qty        = round(float(shares_str), 8) if shares_str else None
+                            unit_price = round(float(price_str), 6)  if price_str  else None
                             total_amt  = round(float(amount_str), 2)
-                            fee_amt    = round(float(fee_str), 2) if fee_str else 0.0
+                            fee_amt    = round(float(fee_str), 2)     if fee_str    else 0.0
                         except (ValueError, TypeError):
-                            qty = unit_price = total_amt = fee_amt = 0.0
+                            qty = unit_price = None
+                            total_amt = fee_amt = 0.0
 
                         dup_key = f"{date_str}_{asset_info['id'] if asset_info else '?'}"
                         is_dup  = asset_info is not None and dup_key in existing_keys
@@ -3546,78 +3549,96 @@ def page_saisie():
                             "🔁 Déjà importé"   if is_dup else
                             "✅ Prêt"
                         )
+                        is_ready = asset_info is not None and account_id is not None and not is_dup
 
                         rows_preview.append({
-                            "status":     status,
-                            "date":       date_str,
-                            "isin":       isin,
-                            "asset":      asset_info["name"] if asset_info else name_tr or isin,
-                            "compte":     acc_type,
-                            "qté":        qty,
-                            "prix (€)":   unit_price,
+                            "importer":    is_ready,
+                            "status":      status,
+                            "date":        date_str,
+                            "type":        bg_type,
+                            "asset":       asset_info["name"] if asset_info else name_tr or isin,
+                            "compte":      acc_type,
+                            "qté":         qty if qty is not None else "",
+                            "prix (€)":    unit_price if unit_price is not None else "",
                             "montant (€)": total_amt,
-                            "_asset_id":  asset_info["id"] if asset_info else None,
+                            "_asset_id":   asset_info["id"] if asset_info else None,
                             "_account_id": account_id,
-                            "_fee":       fee_amt,
-                            "_tr_id":     tr_id,
-                            "_is_dup":    is_dup,
-                            "_ready":     asset_info is not None and account_id is not None and not is_dup,
+                            "_qty":        qty,
+                            "_unit_price": unit_price,
+                            "_fee":        fee_amt,
+                            "_tr_id":      tr_id,
+                            "_is_dup":     is_dup,
+                            "_ready":      is_ready,
+                            "_bg_type":    bg_type,
                         })
 
                     df_preview = pd.DataFrame(rows_preview)
 
                     # Summary counts
-                    n_ready   = df_preview["_ready"].sum()
-                    n_dup     = df_preview["_is_dup"].sum()
-                    n_no_isin = (df_preview["status"] == "⚠️ ISIN inconnu").sum()
+                    n_ready   = int(df_preview["_ready"].sum())
+                    n_dup     = int(df_preview["_is_dup"].sum())
+                    n_no_isin = int((df_preview["status"] == "⚠️ ISIN inconnu").sum())
                     n_total   = len(df_preview)
 
                     col_s1, col_s2, col_s3, col_s4 = st.columns(4)
-                    col_s1.metric("Total achats", n_total)
-                    col_s2.metric("✅ Prêts", n_ready)
-                    col_s3.metric("🔁 Déjà importés", int(n_dup))
-                    col_s4.metric("⚠️ ISIN inconnus", int(n_no_isin))
+                    col_s1.metric("Total lignes", n_total)
+                    col_s2.metric("✅ Prêtes", n_ready)
+                    col_s3.metric("🔁 Déjà importées", n_dup)
+                    col_s4.metric("⚠️ ISIN inconnus", n_no_isin)
 
                     st.divider()
 
-                    # Preview table (display columns only)
-                    display_cols = ["status", "date", "asset", "compte", "qté", "prix (€)", "montant (€)"]
-                    st.dataframe(
-                        df_preview[display_cols],
+                    # Editable preview — checkbox par ligne
+                    st.caption("Coche/décoche les lignes à importer :")
+                    edit_cols = ["importer", "status", "date", "type", "asset", "compte", "qté", "prix (€)", "montant (€)"]
+                    edited = st.data_editor(
+                        df_preview[edit_cols],
                         use_container_width=True,
                         hide_index=True,
+                        disabled=["status", "date", "type", "asset", "compte", "qté", "prix (€)", "montant (€)"],
+                        column_config={
+                            "importer": st.column_config.CheckboxColumn("Importer", default=False),
+                        },
+                        key="tr_preview_editor",
                     )
 
                     # Unmatched ISINs expander
-                    unmatched = df_preview[df_preview["status"] == "⚠️ ISIN inconnu"][["date", "isin", "asset", "compte"]].drop_duplicates()
+                    unmatched = df_preview[df_preview["status"] == "⚠️ ISIN inconnu"][["date", "isin", "asset", "compte"]].drop_duplicates() if "isin" in df_preview.columns else pd.DataFrame()
                     if not unmatched.empty:
                         with st.expander(f"⚠️ {len(unmatched)} ISIN(s) non reconnu(s) — à créer manuellement dans Assets"):
                             st.dataframe(unmatched, use_container_width=True, hide_index=True)
 
-                    # Import button
+                    # Import — only checked + ready rows
                     st.divider()
-                    if n_ready == 0:
-                        st.info("Aucune transaction à importer (tout est déjà importé ou les assets sont inconnus).")
+                    selected_idx = edited[edited["importer"] == True].index
+                    n_selected   = len(selected_idx)
+
+                    if n_selected == 0:
+                        st.info("Aucune transaction sélectionnée.")
                     else:
                         if st.button(
-                            f"📥 Importer {n_ready} transaction(s)",
+                            f"📥 Importer {n_selected} transaction(s) sélectionnée(s)",
                             use_container_width=True,
                             type="primary",
                             key="tr_import_btn",
                         ):
-                            rows_to_insert = df_preview[df_preview["_ready"] == True]
+                            rows_to_insert = df_preview.loc[
+                                selected_idx[df_preview.loc[selected_idx, "_ready"] == True]
+                            ]
                             inserted = 0
                             errors_import = []
                             for _, imp in rows_to_insert.iterrows():
                                 try:
-                                    comment = f"TR:{imp['_tr_id']}" if imp["_tr_id"] else "Import TR"
+                                    bg_type   = imp["_bg_type"]
+                                    is_trade  = bg_type in ("buy", "sell")
+                                    comment   = f"TR:{imp['_tr_id']}" if imp["_tr_id"] else f"Import TR"
                                     supabase.table("transactions").insert({
                                         "date":         imp["date"],
-                                        "type":         "buy",
+                                        "type":         bg_type,
                                         "account_id":   int(imp["_account_id"]),
-                                        "asset_id":     int(imp["_asset_id"]),
-                                        "quantity":     float(imp["qté"]),
-                                        "unit_price":   float(imp["prix (€)"]),
+                                        "asset_id":     int(imp["_asset_id"]) if imp["_asset_id"] else None,
+                                        "quantity":     float(imp["_qty"])        if is_trade and imp["_qty"] is not None else None,
+                                        "unit_price":   float(imp["_unit_price"]) if is_trade and imp["_unit_price"] is not None else None,
                                         "fees":         float(imp["_fee"]) if imp["_fee"] else 0.0,
                                         "total_amount": float(imp["montant (€)"]),
                                         "comment":      comment,
