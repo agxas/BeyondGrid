@@ -33,8 +33,12 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "5.0"
+APP_VERSION = "5.1"
 PATCH_NOTES = {
+    "5.1": [
+        "Suppression des sparklines (mini-graphes unicode) dans la section Performance récente — inutilisables après backfill massif",
+        "Correctif : libellés type en français dans le tableau d'import TR (Achat/Vente/Dividende)",
+    ],
     "5.0": [
         "Nouveau : Import CSV Trade Republic — onglet 'Import TR' dans Saisie manuelle, correspondance ISIN → asset, mapping des comptes, aperçu avant import",
         "Import TR : achats (TRADING/BUY), ventes (TRADING/SELL) et dividendes (CASH/DIVIDEND) supportés — type correct inséré en base",
@@ -725,34 +729,6 @@ def compute_perf_value_over_period(
     start_value = float(df_period.iloc[0]["total_value"])
     return start_value * (idx.iloc[-1] - 1)
 
-
-def compute_sparkline(
-    df_snap: pd.DataFrame,
-    months: int,
-    perf_index: pd.Series | None = None,
-) -> str:
-    """Sparkline basée sur l'indice de performance ajusté.
-
-    Si perf_index est fourni (pré-calculé sur df_period), il est utilisé
-    directement — évite de rappeler _build_perf_index inutilement.
-    """
-    df_period = _slice_period(df_snap, months)
-    if df_period.empty:
-        return ""
-    values       = (perf_index if perf_index is not None else _build_perf_index(df_period)).values
-    # Limiter à 40 caractères max pour éviter le débordement visuel
-    MAX_CHARS = 40
-    if len(values) > MAX_CHARS:
-        step   = max(1, len(values) // MAX_CHARS)
-        values = values[::step]
-    min_v, max_v = values.min(), values.max()
-    if max_v == min_v:
-        return "▁" * len(values)
-    ticks = "▁▂▃▄▅▆▇█"
-    return "".join(
-        ticks[int((v - min_v) / (max_v - min_v) * (len(ticks) - 1))]
-        for v in values
-    )
 
 
 def compute_fire(kpis: dict, settings: dict) -> dict:
@@ -1861,7 +1837,7 @@ def _vg_render_kpis(kpis: dict, daily_change, div_data: dict) -> None:
 
 
 def _vg_render_performance(df_snap: pd.DataFrame) -> None:
-    """Perfs 1m / 3m / 1an / CAGR avec sparklines pré-calculées."""
+    """Perfs 1m / 3m / 1an / CAGR."""
     st.subheader("📅 Performance récente")
     _period_months = [1, 3, 12]
     _period_slices = {m: _slice_period(df_snap, m) for m in _period_months}
@@ -1878,14 +1854,11 @@ def _vg_render_performance(df_snap: pd.DataFrame) -> None:
     val_1m    = compute_perf_value_over_period(df_snap, 1,  perf_index=_period_idx[1])
     val_3m    = compute_perf_value_over_period(df_snap, 3,  perf_index=_period_idx[3])
     val_12m   = compute_perf_value_over_period(df_snap, 12, perf_index=_period_idx[12])
-    spark_1m  = compute_sparkline(df_snap, 1,  perf_index=_period_idx[1])
-    spark_3m  = compute_sparkline(df_snap, 3,  perf_index=_period_idx[3])
-    spark_12m = compute_sparkline(df_snap, 12, perf_index=_period_idx[12])
 
     col1, col2, col3, col4 = st.columns(4)
-    display_kpi_block(col1, "1 mois",  fmt_pct(perf_1m),  subline=f"{fmt_eur(val_1m)} • {spark_1m}")
-    display_kpi_block(col2, "3 mois",  fmt_pct(perf_3m),  subline=f"{fmt_eur(val_3m)} • {spark_3m}")
-    display_kpi_block(col3, "1 an",    fmt_pct(perf_12m), subline=f"{fmt_eur(val_12m)} • {spark_12m}")
+    display_kpi_block(col1, "1 mois",  fmt_pct(perf_1m),  subline=fmt_eur(val_1m))
+    display_kpi_block(col2, "3 mois",  fmt_pct(perf_3m),  subline=fmt_eur(val_3m))
+    display_kpi_block(col3, "1 an",    fmt_pct(perf_12m), subline=fmt_eur(val_12m))
     display_kpi_block(
         col4, "CAGR (depuis le début)",
         fmt_pct(cagr) if cagr is not None else "—",
