@@ -739,8 +739,13 @@ def compute_sparkline(
     df_period = _slice_period(df_snap, months)
     if df_period.empty:
         return ""
-    values        = (perf_index if perf_index is not None else _build_perf_index(df_period)).values
-    min_v, max_v  = values.min(), values.max()
+    values       = (perf_index if perf_index is not None else _build_perf_index(df_period)).values
+    # Limiter à 40 caractères max pour éviter le débordement visuel
+    MAX_CHARS = 40
+    if len(values) > MAX_CHARS:
+        step   = max(1, len(values) // MAX_CHARS)
+        values = values[::step]
+    min_v, max_v = values.min(), values.max()
     if max_v == min_v:
         return "▁" * len(values)
     ticks = "▁▂▃▄▅▆▇█"
@@ -3522,6 +3527,7 @@ def page_saisie():
                                 existing_keys.add(key)
 
                     # Parse each importable row
+                    TYPE_DISPLAY = {"buy": "Achat", "sell": "Vente", "dividend": "Dividende"}
                     rows_preview = []
                     for _, r in df_importable.iterrows():
                         tr_type_raw = (r.get("type") or "").strip().upper()
@@ -3563,7 +3569,7 @@ def page_saisie():
                             "importer":    is_ready,
                             "status":      status,
                             "date":        date_str,
-                            "type":        bg_type,
+                            "type":        TYPE_DISPLAY.get(bg_type, bg_type),
                             "asset":       asset_info["name"] if asset_info else name_tr or isin,
                             "compte":      acc_type,
                             "qté":         qty if qty is not None else "",
