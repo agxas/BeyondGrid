@@ -36,7 +36,11 @@ st.set_page_config(
 APP_VERSION = "5.0"
 PATCH_NOTES = {
     "5.0": [
-        "Nouveau : Import CSV Trade Republic — onglet 'Import TR' dans Saisie manuelle, filtre automatique des achats (TRADING/BUY), correspondance ISIN → asset, détection des doublons, aperçu avant import",
+        "Nouveau : Import CSV Trade Republic — onglet 'Import TR' dans Saisie manuelle, correspondance ISIN → asset, mapping des comptes, aperçu avant import",
+        "Import TR : achats (TRADING/BUY), ventes (TRADING/SELL) et dividendes (CASH/DIVIDEND) supportés — type correct inséré en base",
+        "Import TR : sélection ligne par ligne via checkbox — import uniquement des transactions cochées",
+        "Correctif : détection des doublons par date + asset_id uniquement (le montant peut différer si saisie manuelle avec quantité arrondie)",
+        "Correctif : dividendes TR ignorés car category=CASH — filtre corrigé pour inclure type=DIVIDEND quelle que soit la catégorie",
     ],
     "4.6": [
         "Amélioration Analyse IA : prompt enrichi avec la liste complète des actifs détenus (nom, classe, géographie) et les opérations du mois — Gemini contextualise les perfs avec sa connaissance des marchés",
@@ -3450,17 +3454,21 @@ def page_saisie():
                 df_csv = pd.DataFrame()
 
             if not df_csv.empty:
-                # Filter TRADING rows: BUY, SELL, DIVIDEND
+                # Filter importable rows :
+                #   BUY / SELL → category=TRADING
+                #   DIVIDEND   → category=CASH (Trade Republic exporte les dividendes en CASH)
                 TR_TYPE_MAP = {"BUY": "buy", "SELL": "sell", "DIVIDEND": "dividend"}
+                csv_type = df_csv.get("type", pd.Series(dtype=str)).str.upper()
+                csv_cat  = df_csv.get("category", pd.Series(dtype=str)).str.upper()
                 mask = (
-                    df_csv.get("category", pd.Series(dtype=str)).str.upper() == "TRADING"
-                ) & (
-                    df_csv.get("type", pd.Series(dtype=str)).str.upper().isin(TR_TYPE_MAP)
+                    (csv_cat == "TRADING") & csv_type.isin({"BUY", "SELL"})
+                ) | (
+                    csv_type == "DIVIDEND"
                 )
                 df_importable = df_csv[mask].copy()
 
                 if df_importable.empty:
-                    st.info("Aucune ligne importable (TRADING/BUY|SELL|DIVIDEND) trouvée dans ce fichier.")
+                    st.info("Aucune ligne importable (TRADING/BUY|SELL ou DIVIDEND) trouvée dans ce fichier.")
                 else:
                     # Build ISIN → asset_id lookup
                     isin_to_asset = {}
