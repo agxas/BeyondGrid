@@ -12,6 +12,9 @@
 import math
 import os
 import json
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
 import requests
 
 import streamlit as st
@@ -33,8 +36,11 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "5.5"
+APP_VERSION = "5.6"
 PATCH_NOTES = {
+    "5.6": [
+        "Nouveau : page Actualités — fil d'actualités RSS des actifs en position ouverte (Yahoo Finance + Google News en fallback), vue chronologique globale + accordéons par actif, cache 30 min",
+    ],
     "5.5": [
         "Nouveau : Score de santé du portefeuille — 5 critères (Diversification, Régularité DCA, Performance, Risque maîtrisé, Trajectoire FIRE) sur 100 pts, jauge Plotly + détail des critères affiché en haut de la page Progression",
     ],
@@ -4201,6 +4207,139 @@ def page_saisie():
                                     st.error(f"❌ {err}")
 
 
+def _fetch_rss(url: str, timeout: int = 6) -> list[dict]:
+    """Parse un flux RSS et retourne une liste de dicts {title, link, published, source}."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read()
+        root = ET.fromstring(raw)
+        ns = {}
+        items = root.findall(".//item")
+        results = []
+        for item in items:
+            title = (item.findtext("title") or "").strip()
+            link  = (item.findtext("link")  or "").strip()
+            pub   = (item.findtext("pubDate") or "").strip()
+            source_el = item.find("source")
+            source = source_el.text.strip() if source_el is not None and source_el.text else ""
+            if title and link:
+                try:
+                    dt = pd.to_datetime(pub, utc=True)
+                except Exception:
+                    dt = pd.NaT
+                results.append({"title": title, "link": link, "published": dt, "source": source})
+        return results
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_asset_news(asset_name: str, yahoo_ticker: str | None) -> list[dict]:
+    """
+    Récupère les 5 dernières news pour un actif.
+    Utilise Yahoo Finance RSS si yahoo_ticker est défini, Google News en fallback.
+    """
+    items = []
+    if yahoo_ticker:
+        url = (
+            f"https://feeds.finance.yahoo.com/rss/2.0/headline"
+            f"?s={urllib.parse.quote(yahoo_ticker)}&region=US&lang=en-US"
+        )
+        items = _fetch_rss(url)
+    if not items:
+        query = urllib.parse.quote(asset_name)
+        url   = f"https://news.google.com/rss/search?q={query}&hl=fr&gl=FR&ceid=FR:fr"
+        items = _fetch_rss(url)
+    items.sort(key=lambda x: x["published"] if pd.notna(x["published"]) else pd.Timestamp.min.tz_localize("UTC"), reverse=True)
+    return items[:5]
+
+
+def _open_positions_from_txn(df_txn: pd.DataFrame, df_assets: pd.DataFrame) -> pd.DataFrame:
+    """Retourne les assets en position ouverte (quantité nette > 0)."""
+    buys  = df_txn[df_txn["type"] == "buy"].groupby("asset_id")["quantity"].sum()
+    sells = df_txn[df_txn["type"] == "sell"].groupby("asset_id")["quantity"].sum()
+    net   = buys.subtract(sells, fill_value=0)
+    open_ids = net[net > 1e-8].index.tolist()
+    return df_assets[df_assets["id"].isin(open_ids)].copy()
+
+
+def page_news():
+    st.title("📰 Actualités du portefeuille")
+    _set_page_title("Actualités")
+
+    try:
+        with st.spinner("Chargement..."):
+            df_txn    = fetch_transactions()
+            df_assets = fetch_assets()
+    except RuntimeError as e:
+        st.error(f"❌ Base de données inaccessible — {e}")
+        st.stop()
+
+    df_open = _open_positions_from_txn(df_txn, df_assets)
+    if df_open.empty:
+        st.info("Aucune position ouverte trouvée.")
+        st.stop()
+
+    # ── Chargement des news (parallèle via cache) ─────────────
+    asset_news: dict[int, list[dict]] = {}
+    progress_bar = st.progress(0, text="Récupération des flux RSS…")
+    total = len(df_open)
+    for i, (_, row) in enumerate(df_open.iterrows()):
+        asset_news[row["id"]] = fetch_asset_news(
+            asset_name=row["name"],
+            yahoo_ticker=row.get("yahoo_ticker") or None,
+        )
+        progress_bar.progress((i + 1) / total, text=f"Récupération des flux RSS… {i+1}/{total}")
+    progress_bar.empty()
+
+    # ── Vue globale chronologique ──────────────────────────────
+    st.subheader("🕐 Fil d'actualités récentes")
+
+    all_news = []
+    for _, row in df_open.iterrows():
+        for item in asset_news[row["id"]]:
+            all_news.append({**item, "asset_name": row["name"], "asset_id": row["id"]})
+
+    if not all_news:
+        st.info("Aucune actualité trouvée pour vos positions actuelles.")
+    else:
+        all_news.sort(
+            key=lambda x: x["published"] if pd.notna(x["published"]) else pd.Timestamp.min.tz_localize("UTC"),
+            reverse=True,
+        )
+        for item in all_news[:20]:
+            pub_str = item["published"].strftime("%d/%m/%Y %H:%M") if pd.notna(item["published"]) else "—"
+            source  = f" · {item['source']}" if item["source"] else ""
+            st.markdown(
+                f"**[{item['title']}]({item['link']})**  \n"
+                f"<span style='font-size:0.82em;color:#aaa'>"
+                f"🏷 {item['asset_name']} · {pub_str}{source}"
+                f"</span>",
+                unsafe_allow_html=True,
+            )
+            st.divider()
+
+    # ── Vue par actif ──────────────────────────────────────────
+    st.subheader("🔍 Par actif")
+
+    for _, row in df_open.iterrows():
+        news = asset_news[row["id"]]
+        ticker_badge = f" `{row['yahoo_ticker']}`" if row.get("yahoo_ticker") else ""
+        label = f"**{row['name']}**{ticker_badge} — {len(news)} article{'s' if len(news) != 1 else ''}"
+        with st.expander(label, expanded=False):
+            if not news:
+                st.caption("Aucune actualité trouvée pour cet actif.")
+            for item in news:
+                pub_str = item["published"].strftime("%d/%m/%Y %H:%M") if pd.notna(item["published"]) else "—"
+                source  = f" · {item['source']}" if item["source"] else ""
+                st.markdown(
+                    f"**[{item['title']}]({item['link']})**  \n"
+                    f"<span style='font-size:0.82em;color:#aaa'>{pub_str}{source}</span>",
+                    unsafe_allow_html=True,
+                )
+
+
 def page_transactions():
     st.title("🧾 Historique des transactions")
     _set_page_title("Transactions")
@@ -4631,6 +4770,7 @@ menu = st.sidebar.radio(
         "Synthèse mensuelle",
         "Rééquilibrage PEA",
         "Progression",
+        "Actualités",
         "Saisie manuelle",
         "Transactions",
     ],
@@ -4641,6 +4781,7 @@ menu = st.sidebar.radio(
         "Synthèse mensuelle":    "📅 Synthèse mensuelle",
         "Rééquilibrage PEA":     "⚖️ Rééquilibrage PEA",
         "Progression":           "🎮 Progression",
+        "Actualités":            "📰 Actualités",
         "Saisie manuelle":       "✍️ Saisie manuelle",
         "Transactions":          "🧾 Transactions",
     }[x],
@@ -4658,6 +4799,8 @@ elif menu == "Rééquilibrage PEA":
     page_reequilibrage()
 elif menu == "Progression":
     page_progression()
+elif menu == "Actualités":
+    page_news()
 elif menu == "Saisie manuelle":
     page_saisie()
 elif menu == "Transactions":
