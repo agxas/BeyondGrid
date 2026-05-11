@@ -2917,7 +2917,7 @@ def _an_render_correlation(df_txn: pd.DataFrame, df_assets: pd.DataFrame) -> Non
     z      = corr.values.tolist()
 
     # texte dans chaque cellule
-    text = [[f"{corr.iloc[i][j]:.2f}" for j in range(n)] for i in range(n)]
+    text = [[f"{corr.iloc[i].iloc[j]:.2f}" for j in range(n)] for i in range(n)]
 
     fig = go.Figure(go.Heatmap(
         z=z,
