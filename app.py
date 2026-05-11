@@ -4207,6 +4207,20 @@ def page_saisie():
                                     st.error(f"❌ {err}")
 
 
+def _summary_differs_from_title(summary: str, title: str) -> bool:
+    """Retourne True si le résumé apporte un contenu différent du titre."""
+    import re
+    def _norm(s: str) -> str:
+        s = s.lower()
+        s = re.sub(r"[\s\-\|—–_]+", " ", s)
+        s = re.sub(r"[^\w\s]", "", s)
+        return s.strip()
+    ns, nt = _norm(summary), _norm(title)
+    if not ns:
+        return False
+    return ns not in nt and nt not in ns
+
+
 def _strip_html(text: str) -> str:
     """Retire les balises HTML et décode les entités HTML basiques."""
     import re, html
@@ -4343,7 +4357,7 @@ def page_news():
             summary = item.get("summary", "")
             st.markdown(
                 f"**[{item['title']}]({item['link']})**  \n"
-                + (f"<span style='font-size:0.9em'>{summary}</span>  \n" if summary and summary != item["title"] else "")
+                + (f"<span style='font-size:0.9em'>{summary}</span>  \n" if _summary_differs_from_title(summary, item["title"]) else "")
                 + f"<span style='font-size:0.82em;color:#aaa'>"
                 f"🏷 {item['asset_name']} · {pub_str}{source}"
                 f"</span>",
@@ -4367,7 +4381,7 @@ def page_news():
                 summary = item.get("summary", "")
                 st.markdown(
                     f"**[{item['title']}]({item['link']})**  \n"
-                    + (f"<span style='font-size:0.9em'>{summary}</span>  \n" if summary and summary != item["title"] else "")
+                    + (f"<span style='font-size:0.9em'>{summary}</span>  \n" if _summary_differs_from_title(summary, item["title"]) else "")
                     + f"<span style='font-size:0.82em;color:#aaa'>{pub_str}{source}</span>",
                     unsafe_allow_html=True,
                 )
