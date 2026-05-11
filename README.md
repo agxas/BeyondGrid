@@ -1,4 +1,4 @@
-# 📊 BeyondGrid — v5.2
+# 📊 BeyondGrid — v5.3
 
 > Dashboard de suivi de portefeuille financier multi-comptes, avec performances ajustées des apports, suivi FIRE et analyse IA mensuelle.
 
@@ -143,6 +143,7 @@ Les assets avec `auto_price = FALSE` ont leur prix mis à jour manuellement depu
 - Évolution de la valeur : début/fin de mois, variation € et %
 - Tableau des transactions du mois + barre de progression DCA vs objectif
 - Dividendes reçus dans le mois (total + détail par asset)
+- **Défis mensuels** : 4 défis auto-générés (compléter le DCA, ne pas vendre, recevoir un dividende, battre le Livret A) avec barre de progression
 - **Analyse IA** : analyse personnalisée en français via Gemini 2.5 Flash (gratuit) — performance, discipline DCA, dividendes, trajectoire FIRE
 
 ### 🏦 Vue par compte
@@ -156,6 +157,13 @@ Les assets avec `auto_price = FALSE` ont leur prix mis à jour manuellement depu
 - Formulaire de saisie des cibles (persisté en base)
 - Calcul automatique des ordres à passer (algorithme greedy)
 - Format adapté Trade Republic (arrondi au multiple de 5 €)
+
+### 🎮 Progression
+- **Niveaux FIRE** : 6 paliers (Épargnant → FIRE atteint) avec barre de progression vers le prochain niveau
+- **Streak DCA** : compteur de mois consécutifs à objectif atteint, record personnel, mini-calendrier visuel des 12 derniers mois
+- **Heatmap GitHub-style** : 52 semaines de performance journalière (vert/rouge), survol pour le détail
+- **25 badges** répartis en 6 catégories (Patrimoine, Dividendes, Discipline, Portefeuille, Ancienneté, FIRE) — verrouillés/déverrouillés dynamiquement, barre de complétion globale
+- **Indicateur streak** visible dans la sidebar sur toutes les pages
 
 ### ✍️ Saisie manuelle
 - Paramètres globaux : FIRE, DCA, rendement estimé, inflation, Livret A

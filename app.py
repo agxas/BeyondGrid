@@ -33,8 +33,16 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "5.2"
+APP_VERSION = "5.3"
 PATCH_NOTES = {
+    "5.3": [
+        "Nouveau : page Progression — tableau de bord gamifié avec niveaux FIRE, streak DCA, heatmap de performance et 25 badges",
+        "Nouveau : Niveaux FIRE — 6 paliers (Épargnant → FIRE atteint) avec barre de progression vers le prochain niveau",
+        "Nouveau : Streak DCA — compteur de mois consécutifs à objectif atteint (≥ 95 %), record personnel, indicateur sidebar",
+        "Nouveau : Heatmap GitHub-style — 52 semaines de performance journalière colorées (vert/rouge), survol pour le détail",
+        "Nouveau : 25 badges répartis en 5 catégories (Patrimoine, Dividendes, Discipline, Portefeuille, Ancienneté, FIRE) — verrouillés/déverrouillés dynamiquement",
+        "Nouveau : Défis mensuels dans Synthèse mensuelle — 4 défis auto-générés (DCA, no-sell, dividende, battre Livret A) avec barre de progression",
+    ],
     "5.2": [
         "Correctif Import TR : colonne 'isin' manquante dans df_preview — l'expander 'ISIN non reconnus' ne s'affichait jamais même quand des ISIN étaient inconnus",
         "Correctif : docstring _call_gemini corrigé (1.5 Flash → 2.5 Flash)",
@@ -1689,6 +1697,313 @@ def compute_accounts_evolution(df_snap_acc: pd.DataFrame) -> pd.DataFrame:
     return df_pivot
 
 # ============================================================
+# GAMIFICATION
+# ============================================================
+
+FIRE_LEVELS = [
+    (0,   "🌱 Épargnant",       "#888888"),
+    (10,  "📈 Investisseur",    "#4C9BE8"),
+    (25,  "🏗️ Accumulateur",   "#F5A623"),
+    (50,  "🚀 Pré-FIRE",        "#9B59B6"),
+    (75,  "⚡ FIRE avancé",     "#E84C4C"),
+    (100, "🔥 FIRE atteint",    "#2ECC71"),
+]
+
+
+def compute_fire_level(fire_pct: float) -> dict:
+    """Retourne le niveau FIRE actuel, le prochain palier et la progression entre les deux."""
+    current = FIRE_LEVELS[0]
+    next_lvl = FIRE_LEVELS[1]
+    for i, lvl in enumerate(FIRE_LEVELS):
+        if fire_pct >= lvl[0]:
+            current  = lvl
+            next_lvl = FIRE_LEVELS[i + 1] if i + 1 < len(FIRE_LEVELS) else None
+    if next_lvl is None:
+        progress = 1.0
+    else:
+        span     = next_lvl[0] - current[0]
+        progress = min((fire_pct - current[0]) / span, 1.0) if span > 0 else 1.0
+    return {
+        "label":          current[1],
+        "color":          current[2],
+        "threshold":      current[0],
+        "next_label":     next_lvl[1] if next_lvl else None,
+        "next_threshold": next_lvl[0] if next_lvl else 100,
+        "progress":       progress,
+    }
+
+
+def compute_dca_streak(df_txn: pd.DataFrame, settings: dict) -> tuple[int, int]:
+    """
+    Streak DCA : nombre de mois consécutifs où les achats atteignent ≥ 95 % de l'objectif.
+    Retourne (streak_actuel, meilleur_streak).
+    """
+    monthly_target = float(settings.get("monthly_dca") or 0)
+    if monthly_target == 0:
+        return 0, 0
+    buys = df_txn[df_txn["type"] == "buy"].copy()
+    if buys.empty:
+        return 0, 0
+
+    buys["month"] = buys["date"].dt.to_period("M")
+    monthly_invested = buys.groupby("month")["total_amount"].sum().abs()
+    all_months = pd.period_range(
+        start=monthly_invested.index.min(),
+        end=monthly_invested.index.max(),
+        freq="M",
+    )
+    met = [float(monthly_invested.get(m, 0)) >= monthly_target * 0.95 for m in all_months]
+
+    best_streak = temp = 0
+    for ok in met:
+        temp = temp + 1 if ok else 0
+        best_streak = max(best_streak, temp)
+
+    current_streak = 0
+    for ok in reversed(met):
+        if ok:
+            current_streak += 1
+        else:
+            break
+    return current_streak, best_streak
+
+
+def compute_badges(
+    df_txn: pd.DataFrame,
+    df_assets: pd.DataFrame,
+    df_snap: pd.DataFrame,
+    settings: dict,
+    kpis: dict,
+) -> list[dict]:
+    """
+    25 badges calculés dynamiquement depuis les données existantes.
+    Chaque badge : icon | title | desc | unlocked | category
+    """
+    badges    = []
+    total     = kpis["total_value"]
+    divs      = df_txn[df_txn["type"] == "dividend"]
+    _, best_s = compute_dca_streak(df_txn, settings)
+    fire_tgt  = float(settings.get("fire_target_amount") or 0)
+    fire_pct  = (total / fire_tgt * 100) if fire_tgt > 0 else 0.0
+
+    # ── Patrimoine ─────────────────────────────────────────
+    for threshold, icon, title in [
+        (1_000,   "🌱", "Premiers 1 000 €"),
+        (5_000,   "💵", "Cap des 5 000 €"),
+        (10_000,  "🏆", "Club des 10 000 €"),
+        (25_000,  "🥈", "25 000 € franchis"),
+        (50_000,  "🥇", "50 000 € franchis"),
+        (100_000, "💎", "Les 100k"),
+        (150_000, "🦁", "Plafond PEA"),
+        (250_000, "🚀", "Un quart de million"),
+    ]:
+        badges.append({
+            "icon": icon, "title": title, "category": "Patrimoine",
+            "desc": f"Atteindre {fmt_eur(threshold)} de patrimoine",
+            "unlocked": total >= threshold,
+        })
+
+    # ── Dividendes ─────────────────────────────────────────
+    for nb, icon, title, desc in [
+        (1,  "🎁", "Cash machine",      "Premier dividende reçu"),
+        (10, "💸", "Rentier en herbe",  "10 dividendes reçus"),
+        (50, "🏦", "Income investor",   "50 dividendes reçus"),
+    ]:
+        badges.append({
+            "icon": icon, "title": title, "category": "Dividendes",
+            "desc": desc, "unlocked": len(divs) >= nb,
+        })
+
+    # ── Discipline DCA ─────────────────────────────────────
+    for nb, icon, title, desc in [
+        (3,  "🔥", "Régularité",          "3 mois de DCA consécutifs"),
+        (6,  "⚡", "Discipline",           "6 mois de DCA consécutifs"),
+        (12, "🏅", "Machine à DCA",        "12 mois de DCA consécutifs"),
+        (24, "🎖️","Investisseur de fer",  "24 mois de DCA consécutifs"),
+    ]:
+        badges.append({
+            "icon": icon, "title": title, "category": "Discipline",
+            "desc": desc, "unlocked": best_s >= nb,
+        })
+
+    # ── Portefeuille ───────────────────────────────────────
+    df_pos = compute_positions_with_pru(df_txn, df_assets)
+    if not df_pos.empty:
+        nb_classes = df_pos["asset_class"].nunique()
+        nb_geos    = df_pos["geography"].dropna().nunique()
+        nb_pos     = len(df_pos)
+        for nb, icon, title, desc in [
+            (5,  "🌍", "Diversifié",       "5 positions ouvertes"),
+            (10, "🗺️", "Global Investor",  "10 positions ouvertes"),
+        ]:
+            badges.append({
+                "icon": icon, "title": title, "category": "Portefeuille",
+                "desc": desc, "unlocked": nb_pos >= nb,
+            })
+        badges.append({
+            "icon": "🌐", "title": "Multi-classe", "category": "Portefeuille",
+            "desc": "3 classes d'actifs différentes", "unlocked": nb_classes >= 3,
+        })
+        badges.append({
+            "icon": "🗾", "title": "Mondial", "category": "Portefeuille",
+            "desc": "4 zones géographiques", "unlocked": nb_geos >= 4,
+        })
+
+    # ── Ancienneté ─────────────────────────────────────────
+    if not df_snap.empty:
+        days = (df_snap["date"].max() - df_snap["date"].min()).days
+        for nb, icon, title, desc in [
+            (365,  "📅", "1 an de tracking",       "365 jours de snapshots"),
+            (1095, "🗓️", "Long terme",              "3 ans de suivi"),
+            (1825, "🏛️", "Vétéran",                "5 ans de suivi"),
+        ]:
+            badges.append({
+                "icon": icon, "title": title, "category": "Ancienneté",
+                "desc": desc, "unlocked": days >= nb,
+            })
+
+    # ── FIRE ───────────────────────────────────────────────
+    if fire_tgt > 0:
+        for pct, icon, title, desc in [
+            (25,  "🎯", "En route",        "25 % de l'objectif FIRE"),
+            (50,  "🚀", "Mi-chemin",       "50 % de l'objectif FIRE"),
+            (75,  "⚡", "Ligne d'arrivée", "75 % de l'objectif FIRE"),
+            (100, "🔥", "FIRE !",          "Objectif FIRE atteint"),
+        ]:
+            badges.append({
+                "icon": icon, "title": title, "category": "FIRE",
+                "desc": desc, "unlocked": fire_pct >= pct,
+            })
+
+    return badges
+
+
+def compute_performance_heatmap(df_snap: pd.DataFrame) -> go.Figure:
+    """
+    Heatmap GitHub-style : une case par jour sur 52 semaines.
+    Vert = hausse, Rouge = baisse, gris clair = neutre.
+    """
+    if df_snap.empty or len(df_snap) < 2:
+        return go.Figure()
+
+    perf_index    = _build_perf_index(df_snap)
+    daily_returns = perf_index.pct_change().fillna(0) * 100
+    cutoff        = daily_returns.index.max() - pd.DateOffset(weeks=52)
+    daily_returns = daily_returns[daily_returns.index >= cutoff]
+
+    df           = daily_returns.reset_index()
+    df.columns   = ["date", "perf"]
+    df["date"]   = pd.to_datetime(df["date"])
+    df["dow"]    = df["date"].dt.dayofweek
+    df["week"]   = ((df["date"] - df["date"].min()).dt.days // 7)
+    df["text"]   = df.apply(
+        lambda r: f"{r['date'].strftime('%a %d %b %Y')}<br>{r['perf']:+.3f} %", axis=1
+    )
+
+    max_abs = max(df["perf"].abs().quantile(0.95), 0.1)
+
+    # Labels des mois sur l'axe X
+    month_weeks, month_labels = [], []
+    for _, g in df.groupby(df["date"].dt.to_period("M")):
+        month_weeks.append(int(g.iloc[0]["week"]))
+        month_labels.append(g.iloc[0]["date"].strftime("%b %Y"))
+
+    fig = go.Figure(go.Scatter(
+        x=df["week"], y=df["dow"],
+        mode="markers",
+        marker=dict(
+            symbol="square", size=13,
+            color=df["perf"],
+            colorscale=[[0.0, "#E84C4C"], [0.5, "#eeeeee"], [1.0, "#2ECC71"]],
+            cmin=-max_abs, cmax=max_abs,
+            line=dict(width=1, color="white"),
+            colorbar=dict(title="Perf %", ticksuffix=" %", thickness=12, len=0.8),
+        ),
+        text=df["text"],
+        hovertemplate="%{text}<extra></extra>",
+    ))
+
+    DAY_LABELS = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
+    fig.update_layout(
+        height=185,
+        margin=dict(l=40, r=60, t=30, b=10),
+        xaxis=dict(tickvals=month_weeks, ticktext=month_labels, showgrid=False),
+        yaxis=dict(
+            tickvals=list(range(7)), ticktext=DAY_LABELS,
+            autorange="reversed", showgrid=False,
+        ),
+        plot_bgcolor="white",
+        paper_bgcolor="rgba(0,0,0,0)",
+        hovermode="closest",
+    )
+    return fig
+
+
+def compute_monthly_challenges(
+    df_txn: pd.DataFrame,
+    df_snap: pd.DataFrame,
+    settings: dict,
+    month_start: pd.Timestamp,
+    month_end: pd.Timestamp,
+) -> list[dict]:
+    """
+    4 défis auto-générés et évalués pour le mois donné.
+    Chaque défi : icon | title | done | detail | progress (0–1)
+    """
+    challenges  = []
+    monthly_dca = float(settings.get("monthly_dca") or 0)
+    livret_rate = float(settings.get("livret_a_rate") or 0.03)
+    mask        = (df_txn["date"] >= month_start) & (df_txn["date"] <= month_end)
+
+    # ── Défi 1 : compléter le DCA ──────────────────────────
+    if monthly_dca > 0:
+        invested = abs(df_txn[mask & (df_txn["type"] == "buy")]["total_amount"].sum())
+        pct      = min(invested / monthly_dca, 1.0)
+        challenges.append({
+            "icon": "💰", "title": f"Compléter le DCA ({fmt_eur(monthly_dca)})",
+            "done": pct >= 0.95, "progress": pct,
+            "detail": f"{fmt_eur(invested)} investis sur {fmt_eur(monthly_dca)}",
+        })
+
+    # ── Défi 2 : ne pas vendre ─────────────────────────────
+    sells = df_txn[mask & (df_txn["type"] == "sell")]
+    challenges.append({
+        "icon": "🙅", "title": "Ne pas vendre",
+        "done": sells.empty, "progress": 1.0 if sells.empty else 0.0,
+        "detail": "Aucune vente ce mois" if sells.empty else f"{len(sells)} vente(s) effectuée(s)",
+    })
+
+    # ── Défi 3 : recevoir un dividende ─────────────────────
+    divs_m     = df_txn[mask & (df_txn["type"] == "dividend")]
+    total_div  = float(divs_m["total_amount"].sum())
+    challenges.append({
+        "icon": "🎁", "title": "Recevoir un dividende",
+        "done": not divs_m.empty, "progress": 1.0 if not divs_m.empty else 0.0,
+        "detail": fmt_eur(total_div) if not divs_m.empty else "Aucun dividende ce mois",
+    })
+
+    # ── Défi 4 : battre le Livret A ────────────────────────
+    df_before   = df_snap[df_snap["date"] < month_start].sort_values("date")
+    df_in_month = df_snap[
+        (df_snap["date"] >= month_start) & (df_snap["date"] <= month_end)
+    ].sort_values("date")
+
+    if not df_in_month.empty and not df_before.empty:
+        df_period  = pd.concat([df_before.iloc[[-1]], df_in_month]).reset_index(drop=True)
+        idx        = _build_perf_index(df_period)
+        perf_month = (float(idx.iloc[-1]) - 1) * 100
+        livret_m   = livret_rate / 12 * 100
+        progress   = min(max(perf_month / livret_m, 0.0), 1.0) if livret_m > 0 else 1.0
+        challenges.append({
+            "icon": "🏦", "title": f"Battre le Livret A ({livret_rate*100:.1f} %/an)",
+            "done": perf_month >= livret_m, "progress": progress,
+            "detail": f"Perf : {perf_month:+.2f} % vs {livret_m:+.2f} % (mensuel)",
+        })
+
+    return challenges
+
+
+# ============================================================
 # 4. PAGES
 # ============================================================
 
@@ -2903,6 +3218,34 @@ def page_synthese_mensuelle():
         by_asset.columns = ["Asset", "Montant"]
         st.dataframe(by_asset, use_container_width=True, hide_index=True)
 
+    # ── Défis du mois ─────────────────────────────────────────
+    st.divider()
+    st.subheader("🎯 Défis du mois")
+
+    challenges  = compute_monthly_challenges(df_txn, df_snap, settings, month_start, month_end)
+    done_count  = sum(1 for c in challenges if c["done"])
+
+    if not challenges:
+        st.info("Configure ton DCA mensuel pour activer les défis.")
+    else:
+        st.caption(f"{done_count}/{len(challenges)} défis complétés")
+        cols = st.columns(len(challenges))
+        for i, ch in enumerate(challenges):
+            color  = "#2ECC71" if ch["done"] else "#E84C4C"
+            status = "✅" if ch["done"] else "❌"
+            with cols[i]:
+                st.markdown(
+                    f"<div style='text-align:center;padding:10px;border-radius:8px;"
+                    f"border:1px solid {color}44;background:{color}11;margin-bottom:6px;'>"
+                    f"<div style='font-size:1.6em;'>{ch['icon']}</div>"
+                    f"<div style='font-size:0.78em;font-weight:bold;'>{ch['title']}</div>"
+                    f"<div style='font-size:0.68em;color:#666;margin-top:3px;'>{ch['detail']}</div>"
+                    f"<div style='margin-top:5px;font-size:1.1em;'>{status}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+                st.progress(ch["progress"])
+
     # ── Analyse IA ────────────────────────────────────────────
     st.divider()
     st.subheader("🤖 Analyse IA")
@@ -3821,6 +4164,162 @@ def page_transactions():
 
 
 
+def page_progression():
+    st.title("🎮 Progression")
+    _set_page_title("Progression")
+
+    try:
+        with st.spinner("Chargement..."):
+            df_snap   = fetch_snapshots_agg()
+            df_txn    = fetch_transactions()
+            df_assets = fetch_assets()
+            settings  = fetch_settings()
+    except RuntimeError as e:
+        st.error(f"❌ Base de données inaccessible — {e}")
+        st.stop()
+
+    kpis       = compute_kpis(df_snap)
+    fire_tgt   = float(settings.get("fire_target_amount") or 0)
+    fire_pct   = (kpis["total_value"] / fire_tgt * 100) if fire_tgt > 0 else 0.0
+    level      = compute_fire_level(fire_pct)
+    streak, best_streak = compute_dca_streak(df_txn, settings)
+    monthly_dca = float(settings.get("monthly_dca") or 0)
+
+    # ── Niveau FIRE ────────────────────────────────────────
+    st.subheader("🔥 Niveau FIRE")
+
+    col_lbl, col_bar, col_kpi = st.columns([2, 4, 2])
+    with col_lbl:
+        st.markdown(f"### {level['label']}")
+    with col_bar:
+        if level["next_label"]:
+            st.progress(
+                level["progress"],
+                text=f"Vers **{level['next_label']}** — {fire_pct:.1f} % / {level['next_threshold']} %",
+            )
+        else:
+            st.progress(1.0, text="🎉 Niveau maximum atteint !")
+    with col_kpi:
+        if fire_tgt > 0:
+            st.metric("Patrimoine actuel", fmt_eur(kpis["total_value"]),
+                      f"Objectif : {fmt_eur(fire_tgt)}")
+
+    with st.expander("Tous les niveaux"):
+        cols = st.columns(len(FIRE_LEVELS))
+        for i, (threshold, label, color) in enumerate(FIRE_LEVELS):
+            reached = fire_pct >= threshold
+            icon, name = label.split(" ", 1)
+            opacity = "1.0" if reached else "0.3"
+            cols[i].markdown(
+                f"<div style='text-align:center;opacity:{opacity};'>"
+                f"<div style='font-size:2em;'>{icon}</div>"
+                f"<div style='font-size:0.8em;font-weight:bold;color:{color};'>{name}</div>"
+                f"<div style='font-size:0.7em;color:#888;'>{threshold} %</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+    st.divider()
+
+    # ── Streak DCA ─────────────────────────────────────────
+    st.subheader("🔥 Streak DCA")
+
+    if monthly_dca == 0:
+        st.info("Configure ton DCA mensuel dans **Saisie manuelle** pour activer le streak.")
+    else:
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Streak actuel 🔥", f"{streak} mois")
+        col2.metric("Record personnel 🏆", f"{best_streak} mois")
+        col3.metric("Objectif mensuel", fmt_eur(monthly_dca))
+
+        if streak == 0:
+            st.warning("⚠️ Streak cassé — investis ce mois pour le relancer !")
+        elif streak < 3:
+            st.info(f"🌱 Encore {3 - streak} mois pour débloquer le badge **Régularité**")
+        elif streak < 6:
+            st.info(f"⚡ Encore {6 - streak} mois pour **Discipline**")
+        elif streak < 12:
+            st.success(f"🏅 Encore {12 - streak} mois pour **Machine à DCA** !")
+        else:
+            st.success(f"🎖️ {streak} mois consécutifs — tu es une machine !")
+
+        # Mini-visualisation des 12 derniers mois
+        buys = df_txn[df_txn["type"] == "buy"].copy()
+        if not buys.empty:
+            buys["month"] = buys["date"].dt.to_period("M")
+            monthly_inv   = buys.groupby("month")["total_amount"].sum().abs()
+            last_12       = pd.period_range(
+                end=monthly_inv.index.max(), periods=min(12, len(monthly_inv)), freq="M"
+            )
+            cols = st.columns(len(last_12))
+            for i, m in enumerate(last_12):
+                invested = float(monthly_inv.get(m, 0))
+                ok       = invested >= monthly_dca * 0.95
+                icon     = "🟢" if ok else ("🔴" if invested > 0 else "⬜")
+                cols[i].markdown(
+                    f"<div style='text-align:center;'>"
+                    f"<div style='font-size:1.4em;'>{icon}</div>"
+                    f"<div style='font-size:0.6em;color:#888;'>{m.strftime('%b %y')}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+    st.divider()
+
+    # ── Heatmap de performance ─────────────────────────────
+    st.subheader("📅 Heatmap de performance — 52 semaines")
+    if df_snap.empty or len(df_snap) < 2:
+        st.info("Pas encore assez de données pour afficher la heatmap.")
+    else:
+        st.plotly_chart(compute_performance_heatmap(df_snap), use_container_width=True)
+        st.caption("Chaque case = un jour · 🟩 Hausse · 🟥 Baisse · Survol pour le détail")
+
+    st.divider()
+
+    # ── Badges ─────────────────────────────────────────────
+    st.subheader("🏅 Badges")
+    badges   = compute_badges(df_txn, df_assets, df_snap, settings, kpis)
+    unlocked = [b for b in badges if b["unlocked"]]
+
+    st.progress(
+        len(unlocked) / len(badges),
+        text=f"{len(unlocked)} / {len(badges)} badges débloqués — {len(unlocked)/len(badges)*100:.0f} % de complétion",
+    )
+
+    categories = {}
+    for b in badges:
+        categories.setdefault(b["category"], []).append(b)
+
+    for cat, cat_badges in categories.items():
+        n_unlocked = sum(1 for b in cat_badges if b["unlocked"])
+        with st.expander(f"{cat} — {n_unlocked}/{len(cat_badges)}", expanded=True):
+            cols = st.columns(min(len(cat_badges), 4))
+            for i, badge in enumerate(cat_badges):
+                with cols[i % 4]:
+                    if badge["unlocked"]:
+                        st.markdown(
+                            f"<div style='text-align:center;padding:12px;border-radius:10px;"
+                            f"background:linear-gradient(135deg,#2ECC7118,#4C9BE818);"
+                            f"border:1px solid #2ECC7155;margin-bottom:8px;'>"
+                            f"<div style='font-size:2em;'>{badge['icon']}</div>"
+                            f"<div style='font-weight:bold;font-size:0.82em;'>{badge['title']}</div>"
+                            f"<div style='font-size:0.7em;color:#555;margin-top:4px;'>{badge['desc']}</div>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        st.markdown(
+                            f"<div style='text-align:center;padding:12px;border-radius:10px;"
+                            f"background:#f5f5f5;border:1px solid #ddd;"
+                            f"opacity:0.45;margin-bottom:8px;'>"
+                            f"<div style='font-size:2em;'>🔒</div>"
+                            f"<div style='font-weight:bold;font-size:0.82em;color:#888;'>{badge['title']}</div>"
+                            f"<div style='font-size:0.7em;color:#aaa;margin-top:4px;'>{badge['desc']}</div>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+
+
 # ============================================================
 # 5. ROUTING
 # ============================================================
@@ -3855,6 +4354,16 @@ try:
         _, _max_dd = compute_drawdown(_df_snap_check)
         if _max_dd < -20:
             st.sidebar.error(f"📉 Drawdown sévère : **{_max_dd:.1f} %** depuis le plus haut")
+    # Indicateur streak DCA dans la sidebar
+    try:
+        _settings_check = fetch_settings()
+        _txn_check      = fetch_transactions()
+        _streak, _best  = compute_dca_streak(_txn_check, _settings_check)
+        if _streak > 0:
+            _flame = "🔥" * min(_streak, 5)
+            st.sidebar.success(f"{_flame} Streak DCA : **{_streak} mois**")
+    except Exception:
+        pass
 except RuntimeError:
     st.sidebar.error("❌ Supabase inaccessible")
 
@@ -3866,6 +4375,7 @@ menu = st.sidebar.radio(
         "Analyses & Graphiques",
         "Synthèse mensuelle",
         "Rééquilibrage PEA",
+        "Progression",
         "Saisie manuelle",
         "Transactions",
     ],
@@ -3875,6 +4385,7 @@ menu = st.sidebar.radio(
         "Analyses & Graphiques": "📊 Analyses",
         "Synthèse mensuelle":    "📅 Synthèse mensuelle",
         "Rééquilibrage PEA":     "⚖️ Rééquilibrage PEA",
+        "Progression":           "🎮 Progression",
         "Saisie manuelle":       "✍️ Saisie manuelle",
         "Transactions":          "🧾 Transactions",
     }[x],
@@ -3890,6 +4401,8 @@ elif menu == "Synthèse mensuelle":
     page_synthese_mensuelle()
 elif menu == "Rééquilibrage PEA":
     page_reequilibrage()
+elif menu == "Progression":
+    page_progression()
 elif menu == "Saisie manuelle":
     page_saisie()
 elif menu == "Transactions":
