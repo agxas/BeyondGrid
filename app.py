@@ -4354,16 +4354,6 @@ try:
         _, _max_dd = compute_drawdown(_df_snap_check)
         if _max_dd < -20:
             st.sidebar.error(f"📉 Drawdown sévère : **{_max_dd:.1f} %** depuis le plus haut")
-    # Indicateur streak DCA dans la sidebar
-    try:
-        _settings_check = fetch_settings()
-        _txn_check      = fetch_transactions()
-        _streak, _best  = compute_dca_streak(_txn_check, _settings_check)
-        if _streak > 0:
-            _flame = "🔥" * min(_streak, 5)
-            st.sidebar.success(f"{_flame} Streak DCA : **{_streak} mois**")
-    except Exception:
-        pass
 except RuntimeError:
     st.sidebar.error("❌ Supabase inaccessible")
 
