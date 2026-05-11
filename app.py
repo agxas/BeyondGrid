@@ -4343,7 +4343,7 @@ def page_news():
             summary = item.get("summary", "")
             st.markdown(
                 f"**[{item['title']}]({item['link']})**  \n"
-                + (f"<span style='font-size:0.9em'>{summary}</span>  \n" if summary else "")
+                + (f"<span style='font-size:0.9em'>{summary}</span>  \n" if summary and summary != item["title"] else "")
                 + f"<span style='font-size:0.82em;color:#aaa'>"
                 f"🏷 {item['asset_name']} · {pub_str}{source}"
                 f"</span>",
@@ -4367,7 +4367,7 @@ def page_news():
                 summary = item.get("summary", "")
                 st.markdown(
                     f"**[{item['title']}]({item['link']})**  \n"
-                    + (f"<span style='font-size:0.9em'>{summary}</span>  \n" if summary else "")
+                    + (f"<span style='font-size:0.9em'>{summary}</span>  \n" if summary and summary != item["title"] else "")
                     + f"<span style='font-size:0.82em;color:#aaa'>{pub_str}{source}</span>",
                     unsafe_allow_html=True,
                 )
