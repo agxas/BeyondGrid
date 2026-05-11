@@ -4241,14 +4241,16 @@ def fetch_asset_news(asset_name: str, yahoo_ticker: str | None) -> list[dict]:
     Utilise Yahoo Finance RSS si yahoo_ticker est défini, Google News en fallback.
     """
     items = []
-    if yahoo_ticker:
+    ticker_str = str(yahoo_ticker).strip() if yahoo_ticker else ""
+    name_str   = str(asset_name).strip()
+    if ticker_str:
         url = (
             f"https://feeds.finance.yahoo.com/rss/2.0/headline"
-            f"?s={urllib.parse.quote(yahoo_ticker)}&region=US&lang=en-US"
+            f"?s={urllib.parse.quote(ticker_str)}&region=US&lang=en-US"
         )
         items = _fetch_rss(url)
     if not items:
-        query = urllib.parse.quote(asset_name)
+        query = urllib.parse.quote(name_str)
         url   = f"https://news.google.com/rss/search?q={query}&hl=fr&gl=FR&ceid=FR:fr"
         items = _fetch_rss(url)
     items.sort(key=lambda x: x["published"] if pd.notna(x["published"]) else pd.Timestamp.min.tz_localize("UTC"), reverse=True)
