@@ -1,4 +1,4 @@
-# 📊 BeyondGrid — v5.3
+# 📊 BeyondGrid — v5.5
 
 > Dashboard de suivi de portefeuille financier multi-comptes, avec performances ajustées des apports, suivi FIRE et analyse IA mensuelle.
 
@@ -159,11 +159,11 @@ Les assets avec `auto_price = FALSE` ont leur prix mis à jour manuellement depu
 - Format adapté Trade Republic (arrondi au multiple de 5 €)
 
 ### 🎮 Progression
+- **Score de santé** : score sur 100 pts calculé sur 5 critères (Diversification, Régularité DCA, Performance CAGR, Risque maîtrisé, Trajectoire FIRE) — jauge Plotly + détail coloré par critère
 - **Niveaux FIRE** : 6 paliers (Épargnant → FIRE atteint) avec barre de progression vers le prochain niveau
 - **Streak DCA** : compteur de mois consécutifs à objectif atteint, record personnel, mini-calendrier visuel des 12 derniers mois
 - **Heatmap GitHub-style** : 52 semaines de performance journalière (vert/rouge), survol pour le détail
 - **25 badges** répartis en 6 catégories (Patrimoine, Dividendes, Discipline, Portefeuille, Ancienneté, FIRE) — verrouillés/déverrouillés dynamiquement, barre de complétion globale
-- **Indicateur streak** visible dans la sidebar sur toutes les pages
 
 ### ✍️ Saisie manuelle
 - Paramètres globaux : FIRE, DCA, rendement estimé, inflation, Livret A
