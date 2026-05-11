@@ -33,8 +33,11 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "5.4"
+APP_VERSION = "5.5"
 PATCH_NOTES = {
+    "5.5": [
+        "Nouveau : Score de santé du portefeuille — 5 critères (Diversification, Régularité DCA, Performance, Risque maîtrisé, Trajectoire FIRE) sur 100 pts, jauge Plotly + détail des critères affiché en haut de la page Progression",
+    ],
     "5.4": [
         "Suppression de l'indicateur streak DCA de la sidebar",
     ],
@@ -2004,6 +2007,211 @@ def compute_monthly_challenges(
         })
 
     return challenges
+
+
+def _health_score_color(score: int) -> str:
+    if score >= 85:
+        return "#2ECC71"
+    if score >= 70:
+        return "#27AE60"
+    if score >= 55:
+        return "#F1C40F"
+    if score >= 40:
+        return "#E67E22"
+    return "#E74C3C"
+
+
+def _health_score_label(score: int) -> str:
+    if score >= 85:
+        return "🟢 Excellent"
+    if score >= 70:
+        return "🟢 Solide"
+    if score >= 55:
+        return "🟡 Correct"
+    if score >= 40:
+        return "🟠 À améliorer"
+    return "🔴 Fragile"
+
+
+def compute_health_score(
+    df_snap: pd.DataFrame,
+    df_txn: pd.DataFrame,
+    df_assets: pd.DataFrame,
+    settings: dict,
+    kpis: dict,
+) -> dict:
+    """
+    Score de santé du portefeuille sur 100 pts.
+
+    5 critères :
+      - Diversification    : 25 pts  (nombre d'actifs distincts en position)
+      - Régularité DCA     : 20 pts  (% mois avec DCA ≥ 95 % objectif sur 12 mois)
+      - Performance        : 25 pts  (CAGR ajusté vs seuils)
+      - Risque maîtrisé    : 20 pts  (max drawdown sur 1 an)
+      - Trajectoire FIRE   : 10 pts  (progression vers l'objectif FIRE)
+
+    Retourne un dict avec score global, label, couleur et détail par critère.
+    """
+    criteria = []
+
+    # ── 1. Diversification (25 pts) ────────────────────────────
+    buys = df_txn[df_txn["type"] == "buy"]
+    sells = df_txn[df_txn["type"] == "sell"]
+    buy_quantities = buys.groupby("asset_id")["quantity"].sum()
+    sell_quantities = sells.groupby("asset_id")["quantity"].sum()
+    net_qty = buy_quantities.subtract(sell_quantities, fill_value=0)
+    open_positions = (net_qty > 1e-8).sum()
+    if open_positions >= 10:
+        pts_div = 25
+        detail_div = f"{open_positions} actifs"
+    elif open_positions >= 6:
+        pts_div = 17
+        detail_div = f"{open_positions} actifs"
+    elif open_positions >= 3:
+        pts_div = 10
+        detail_div = f"{open_positions} actifs"
+    else:
+        pts_div = 4
+        detail_div = f"{open_positions} actif{'s' if open_positions != 1 else ''}"
+    criteria.append({
+        "name": "Diversification",
+        "pts": pts_div, "max": 25,
+        "detail": detail_div,
+    })
+
+    # ── 2. Régularité DCA (20 pts) ─────────────────────────────
+    monthly_dca = float(settings.get("monthly_dca") or 0)
+    if monthly_dca <= 0:
+        pts_dca = 10
+        detail_dca = "Objectif DCA non configuré"
+    else:
+        today = pd.Timestamp.today().normalize()
+        months_checked = []
+        for i in range(1, 13):
+            m_start = (today - pd.DateOffset(months=i)).replace(day=1)
+            m_end   = (m_start + pd.DateOffset(months=1)) - pd.Timedelta(days=1)
+            invested = abs(
+                df_txn[
+                    (df_txn["type"] == "buy") &
+                    (df_txn["date"] >= m_start) &
+                    (df_txn["date"] <= m_end)
+                ]["total_amount"].sum()
+            )
+            months_checked.append(invested >= monthly_dca * 0.95)
+        ok_count = sum(months_checked)
+        ratio = ok_count / 12
+        pts_dca = round(ratio * 20)
+        detail_dca = f"{ok_count}/12 mois à objectif"
+    criteria.append({
+        "name": "Régularité DCA",
+        "pts": pts_dca, "max": 20,
+        "detail": detail_dca,
+    })
+
+    # ── 3. Performance (25 pts) ────────────────────────────────
+    if df_snap.empty or len(df_snap) < 30:
+        pts_perf = 10
+        detail_perf = "Données insuffisantes (< 30j)"
+    else:
+        perf_idx = _build_perf_index(df_snap)
+        cagr = compute_cagr(df_snap, perf_index=perf_idx)
+        if cagr is None:
+            pts_perf = 10
+            detail_perf = "Moins de 30 j de données"
+        elif cagr >= 10:
+            pts_perf = 25
+            detail_perf = f"CAGR {cagr:.1f} %/an"
+        elif cagr >= 7:
+            pts_perf = 20
+            detail_perf = f"CAGR {cagr:.1f} %/an"
+        elif cagr >= 4:
+            pts_perf = 14
+            detail_perf = f"CAGR {cagr:.1f} %/an"
+        elif cagr >= 0:
+            pts_perf = 8
+            detail_perf = f"CAGR {cagr:.1f} %/an"
+        else:
+            pts_perf = 2
+            detail_perf = f"CAGR {cagr:.1f} %/an"
+    criteria.append({
+        "name": "Performance",
+        "pts": pts_perf, "max": 25,
+        "detail": detail_perf,
+    })
+
+    # ── 4. Risque maîtrisé (20 pts) — max drawdown 1 an ───────
+    df_1y = _slice_period(df_snap, 12)
+    if df_1y.empty or len(df_1y) < 10:
+        pts_risk = 10
+        detail_risk = "Données insuffisantes"
+    else:
+        pi = _build_perf_index(df_1y)
+        rolling_max = pi.cummax()
+        drawdown = (pi / rolling_max - 1) * 100
+        max_dd = float(drawdown.min())
+        if max_dd > -5:
+            pts_risk = 20
+            detail_risk = f"Max DD {max_dd:.1f} %"
+        elif max_dd > -10:
+            pts_risk = 16
+            detail_risk = f"Max DD {max_dd:.1f} %"
+        elif max_dd > -20:
+            pts_risk = 10
+            detail_risk = f"Max DD {max_dd:.1f} %"
+        elif max_dd > -30:
+            pts_risk = 5
+            detail_risk = f"Max DD {max_dd:.1f} %"
+        else:
+            pts_risk = 1
+            detail_risk = f"Max DD {max_dd:.1f} %"
+    criteria.append({
+        "name": "Risque maîtrisé",
+        "pts": pts_risk, "max": 20,
+        "detail": detail_risk,
+    })
+
+    # ── 5. Trajectoire FIRE (10 pts) ───────────────────────────
+    fire_tgt = float(settings.get("fire_target_amount") or 0)
+    if fire_tgt <= 0:
+        # FIRE non configuré — normalise sur 90 pts (pas de pénalité)
+        max_pts = 90
+        pts_fire = 0
+        detail_fire = "Objectif FIRE non configuré"
+        fire_not_set = True
+    else:
+        fire_not_set = False
+        fire_pct = kpis["total_value"] / fire_tgt * 100
+        if fire_pct >= 100:
+            pts_fire = 10
+        elif fire_pct >= 75:
+            pts_fire = 8
+        elif fire_pct >= 50:
+            pts_fire = 6
+        elif fire_pct >= 25:
+            pts_fire = 3
+        else:
+            pts_fire = 1
+        detail_fire = f"{fire_pct:.1f} % de l'objectif"
+        max_pts = 100
+    criteria.append({
+        "name": "Trajectoire FIRE",
+        "pts": pts_fire, "max": 10,
+        "detail": detail_fire,
+    })
+
+    raw_score = pts_div + pts_dca + pts_perf + pts_risk + pts_fire
+    if fire_not_set:
+        score = round(raw_score / 90 * 100)
+    else:
+        score = raw_score
+
+    return {
+        "score":    score,
+        "label":    _health_score_label(score),
+        "color":    _health_score_color(score),
+        "criteria": criteria,
+        "fire_not_set": fire_not_set,
+    }
 
 
 # ============================================================
@@ -4187,6 +4395,60 @@ def page_progression():
     level      = compute_fire_level(fire_pct)
     streak, best_streak = compute_dca_streak(df_txn, settings)
     monthly_dca = float(settings.get("monthly_dca") or 0)
+    health     = compute_health_score(df_snap, df_txn, df_assets, settings, kpis)
+
+    # ── Score de santé ─────────────────────────────────────
+    st.subheader("🩺 Score de santé du portefeuille")
+    col_gauge, col_criteria = st.columns([2, 3])
+
+    with col_gauge:
+        gauge_fig = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=health["score"],
+            number={"suffix": " / 100", "font": {"size": 28, "color": health["color"]}},
+            gauge={
+                "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": "#555"},
+                "bar":  {"color": health["color"], "thickness": 0.25},
+                "bgcolor": "rgba(0,0,0,0)",
+                "borderwidth": 0,
+                "steps": [
+                    {"range": [0,  40], "color": "rgba(231,76,60,0.15)"},
+                    {"range": [40, 55], "color": "rgba(230,126,34,0.15)"},
+                    {"range": [55, 70], "color": "rgba(241,196,15,0.15)"},
+                    {"range": [70, 85], "color": "rgba(39,174,96,0.15)"},
+                    {"range": [85,100], "color": "rgba(46,204,113,0.15)"},
+                ],
+                "threshold": {
+                    "line": {"color": health["color"], "width": 3},
+                    "thickness": 0.75,
+                    "value": health["score"],
+                },
+            },
+            title={"text": health["label"], "font": {"size": 16}},
+        ))
+        gauge_fig.update_layout(
+            height=220, margin=dict(t=30, b=0, l=20, r=20),
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font={"color": "#FAFAFA"},
+        )
+        st.plotly_chart(gauge_fig, use_container_width=True)
+        if health["fire_not_set"]:
+            st.caption("* Score normalisé sur 90 pts — objectif FIRE non configuré")
+
+    with col_criteria:
+        st.markdown("**Détail des critères**")
+        for c in health["criteria"]:
+            ratio = c["pts"] / c["max"] if c["max"] > 0 else 0
+            bar_color = _health_score_color(round(ratio * 100))
+            filled = int(ratio * 20)
+            bar_str = "█" * filled + "░" * (20 - filled)
+            st.markdown(
+                f"**{c['name']}** — {c['pts']} / {c['max']} pts  \n"
+                f"<span style='color:{bar_color};font-family:monospace'>{bar_str}</span>  "
+                f"<span style='font-size:0.85em;color:#aaa'>{c['detail']}</span>",
+                unsafe_allow_html=True,
+            )
+        st.divider()
 
     # ── Niveau FIRE ────────────────────────────────────────
     st.subheader("🔥 Niveau FIRE")
