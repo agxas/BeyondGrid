@@ -4302,6 +4302,14 @@ def page_news():
         st.info("Aucune position ouverte trouvée.")
         st.stop()
 
+    col_info, col_btn = st.columns([5, 1])
+    with col_info:
+        st.caption("Flux RSS mis en cache 30 min — cliquez sur Rafraîchir pour forcer la mise à jour.")
+    with col_btn:
+        if st.button("🔄 Rafraîchir", use_container_width=True):
+            fetch_asset_news.clear()
+            st.rerun()
+
     # ── Chargement des news (parallèle via cache) ─────────────
     asset_news: dict[int, list[dict]] = {}
     progress_bar = st.progress(0, text="Récupération des flux RSS…")
@@ -4767,6 +4775,7 @@ if st.sidebar.button("🔄 Actualiser les données", use_container_width=True):
     fetch_accounts.clear()
     fetch_assets.clear()
     fetch_transactions.clear()
+    fetch_asset_news.clear()
     st.rerun()
 
 st.sidebar.divider()
