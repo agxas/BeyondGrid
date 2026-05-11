@@ -1,4 +1,4 @@
-# 📊 BeyondGrid — v4.6
+# 📊 BeyondGrid — v5.2
 
 > Dashboard de suivi de portefeuille financier multi-comptes, avec performances ajustées des apports, suivi FIRE et analyse IA mensuelle.
 
@@ -12,7 +12,7 @@
 - 📉 Performances **nettes des apports** (méthode TWR-like — un DCA ne gonfle pas artificiellement les chiffres)
 - 🎯 Suivi de l'objectif FIRE avec règle des 4 %
 - ⚖️ Rééquilibrage PEA assisté avec calcul des ordres Trade Republic
-- 📅 Synthèse mensuelle avec analyse IA personnalisée (Gemini 1.5 Flash — gratuit)
+- 📅 Synthèse mensuelle avec analyse IA personnalisée (Gemini 2.5 Flash — gratuit)
 - 🔄 Snapshots journaliers automatisés via GitHub Actions
 
 **Stack :**
@@ -23,7 +23,7 @@
 | Base de données | Supabase (PostgreSQL) |
 | Automatisation | GitHub Actions |
 | Données de marché | yfinance |
-| Analyse IA | Google Gemini 1.5 Flash (API gratuite) |
+| Analyse IA | Google Gemini 2.5 Flash (API gratuite) |
 
 ---
 
@@ -143,7 +143,7 @@ Les assets avec `auto_price = FALSE` ont leur prix mis à jour manuellement depu
 - Évolution de la valeur : début/fin de mois, variation € et %
 - Tableau des transactions du mois + barre de progression DCA vs objectif
 - Dividendes reçus dans le mois (total + détail par asset)
-- **Analyse IA** : analyse personnalisée en français via Gemini 1.5 Flash (gratuit) — performance, discipline DCA, dividendes, trajectoire FIRE
+- **Analyse IA** : analyse personnalisée en français via Gemini 2.5 Flash (gratuit) — performance, discipline DCA, dividendes, trajectoire FIRE
 
 ### 🏦 Vue par compte
 - KPIs par enveloppe : valeur, capital investi, plus-value, CAGR
@@ -162,6 +162,7 @@ Les assets avec `auto_price = FALSE` ont leur prix mis à jour manuellement depu
 - Clé API Gemini pour l'analyse IA mensuelle (champ sécurisé)
 - Mise à jour des prix manuels avec liens vers les pages de cours
 - Saisie de nouvelles transactions avec aperçu du montant en temps réel
+- Import CSV Trade Republic : achats, ventes et dividendes — correspondance ISIN → asset, aperçu avant import, sélection ligne par ligne, détection des doublons
 
 ### 🧾 Transactions
 - Historique filtrable par compte, type, asset et période
