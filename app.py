@@ -4241,7 +4241,9 @@ def fetch_asset_news(asset_name: str, yahoo_ticker: str | None) -> list[dict]:
     Utilise Yahoo Finance RSS si yahoo_ticker est défini, Google News en fallback.
     """
     items = []
-    ticker_str = str(yahoo_ticker).strip() if yahoo_ticker else ""
+    _t = yahoo_ticker if yahoo_ticker is not None else ""
+    ticker_str = "" if (pd.isna(_t) if not isinstance(_t, str) else False) else str(_t).strip()
+    ticker_str = "" if ticker_str.lower() == "nan" else ticker_str
     name_str   = str(asset_name).strip()
     if ticker_str:
         url = (
