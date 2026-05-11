@@ -4207,14 +4207,22 @@ def page_saisie():
                                     st.error(f"❌ {err}")
 
 
+def _strip_html(text: str) -> str:
+    """Retire les balises HTML et décode les entités HTML basiques."""
+    import re, html
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = html.unescape(text)
+    text = re.sub(r"\s{2,}", " ", text)
+    return text.strip()
+
+
 def _fetch_rss(url: str, timeout: int = 6) -> list[dict]:
-    """Parse un flux RSS et retourne une liste de dicts {title, link, published, source}."""
+    """Parse un flux RSS et retourne une liste de dicts {title, link, published, source, summary}."""
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read()
         root = ET.fromstring(raw)
-        ns = {}
         items = root.findall(".//item")
         results = []
         for item in items:
@@ -4223,12 +4231,21 @@ def _fetch_rss(url: str, timeout: int = 6) -> list[dict]:
             pub   = (item.findtext("pubDate") or "").strip()
             source_el = item.find("source")
             source = source_el.text.strip() if source_el is not None and source_el.text else ""
+            raw_desc = item.findtext("description") or ""
+            summary  = _strip_html(raw_desc)
+            # tronquer à 300 caractères max
+            if len(summary) > 300:
+                summary = summary[:297].rsplit(" ", 1)[0] + "…"
             if title and link:
                 try:
                     dt = pd.to_datetime(pub, utc=True)
                 except Exception:
                     dt = pd.NaT
-                results.append({"title": title, "link": link, "published": dt, "source": source})
+                results.append({
+                    "title": title, "link": link,
+                    "published": dt, "source": source,
+                    "summary": summary,
+                })
         return results
     except Exception:
         return []
@@ -4315,9 +4332,11 @@ def page_news():
         for item in all_news[:20]:
             pub_str = item["published"].strftime("%d/%m/%Y %H:%M") if pd.notna(item["published"]) else "—"
             source  = f" · {item['source']}" if item["source"] else ""
+            summary = item.get("summary", "")
             st.markdown(
                 f"**[{item['title']}]({item['link']})**  \n"
-                f"<span style='font-size:0.82em;color:#aaa'>"
+                + (f"<span style='font-size:0.9em'>{summary}</span>  \n" if summary else "")
+                + f"<span style='font-size:0.82em;color:#aaa'>"
                 f"🏷 {item['asset_name']} · {pub_str}{source}"
                 f"</span>",
                 unsafe_allow_html=True,
@@ -4337,11 +4356,14 @@ def page_news():
             for item in news:
                 pub_str = item["published"].strftime("%d/%m/%Y %H:%M") if pd.notna(item["published"]) else "—"
                 source  = f" · {item['source']}" if item["source"] else ""
+                summary = item.get("summary", "")
                 st.markdown(
                     f"**[{item['title']}]({item['link']})**  \n"
-                    f"<span style='font-size:0.82em;color:#aaa'>{pub_str}{source}</span>",
+                    + (f"<span style='font-size:0.9em'>{summary}</span>  \n" if summary else "")
+                    + f"<span style='font-size:0.82em;color:#aaa'>{pub_str}{source}</span>",
                     unsafe_allow_html=True,
                 )
+                st.divider()
 
 
 def page_transactions():
