@@ -36,8 +36,11 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "5.6"
+APP_VERSION = "5.7"
 PATCH_NOTES = {
+    "5.7": [
+        "Nouveau : matrice de corrélation des rendements journaliers dans Analyses & Graphiques — heatmap Plotly sur 1 an, tous les actifs en position ouverte avec ticker Yahoo Finance, cache 1h",
+    ],
     "5.6": [
         "Nouveau : page Actualités — fil d'actualités RSS des actifs en position ouverte (Yahoo Finance + Google News en fallback), vue chronologique globale + accordéons par actif, cache 30 min",
     ],
@@ -487,6 +490,27 @@ def fetch_transactions() -> pd.DataFrame:
     df = pd.DataFrame(res.data)
     df["date"] = _to_naive_datetime(df["date"])
     return df
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_prices_history(tickers: tuple[str, ...], period: str = "1y") -> pd.DataFrame:
+    """
+    Historique de clôture ajusté pour une liste de tickers (tuple pour la sérialisation du cache).
+    Retourne un DataFrame colonnes = tickers, index = date.
+    """
+    if not tickers:
+        return pd.DataFrame()
+    try:
+        raw = yf.download(list(tickers), period=period, progress=False, auto_adjust=True)
+        if raw.empty:
+            return pd.DataFrame()
+        prices = raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw
+        if isinstance(prices, pd.Series):
+            prices = prices.to_frame(name=tickers[0])
+        prices.index = pd.to_datetime(prices.index).tz_localize(None)
+        return prices.dropna(how="all")
+    except Exception:
+        return pd.DataFrame()
 
 
 # FIX BENCHMARK : +5j de marge + strip timezone
@@ -2846,6 +2870,85 @@ def _an_render_dividends(
         st.plotly_chart(div_data["fig_year"], use_container_width=True)
 
 
+def _an_render_correlation(df_txn: pd.DataFrame, df_assets: pd.DataFrame) -> None:
+    """Matrice de corrélation des rendements journaliers des actifs en position ouverte (1 an)."""
+    st.subheader("🔗 Corrélation entre actifs")
+
+    # actifs en position ouverte avec un yahoo_ticker
+    buys  = df_txn[df_txn["type"] == "buy"].groupby("asset_id")["quantity"].sum()
+    sells = df_txn[df_txn["type"] == "sell"].groupby("asset_id")["quantity"].sum()
+    net   = buys.subtract(sells, fill_value=0)
+    open_ids = net[net > 1e-8].index.tolist()
+    df_open  = df_assets[
+        df_assets["id"].isin(open_ids) &
+        df_assets["yahoo_ticker"].notna() &
+        (df_assets["yahoo_ticker"].astype(str).str.strip().str.lower() != "nan")
+    ].copy()
+
+    if len(df_open) < 2:
+        st.info("Il faut au moins 2 actifs avec un ticker Yahoo Finance pour afficher la matrice de corrélation.")
+        return
+
+    tickers     = tuple(df_open["yahoo_ticker"].astype(str).str.strip().tolist())
+    ticker_name = dict(zip(df_open["yahoo_ticker"].astype(str).str.strip(), df_open["name"]))
+
+    with st.spinner("Chargement des prix…"):
+        prices = fetch_prices_history(tickers, period="1y")
+
+    if prices.empty or prices.shape[1] < 2:
+        st.warning("Impossible de récupérer les données de prix.")
+        return
+
+    # renommer les colonnes ticker → nom d'actif
+    prices.rename(columns=ticker_name, inplace=True)
+
+    returns = prices.pct_change().dropna(how="all")
+    # garder uniquement les colonnes avec assez de données
+    returns = returns.dropna(axis=1, thresh=int(len(returns) * 0.7))
+    if returns.shape[1] < 2:
+        st.warning("Données insuffisantes pour calculer les corrélations.")
+        return
+
+    corr = returns.corr()
+
+    # ── Heatmap Plotly ──────────────────────────────────────
+    n     = len(corr)
+    labels = list(corr.columns)
+    z      = corr.values.tolist()
+
+    # texte dans chaque cellule
+    text = [[f"{corr.iloc[i][j]:.2f}" for j in range(n)] for i in range(n)]
+
+    fig = go.Figure(go.Heatmap(
+        z=z,
+        x=labels,
+        y=labels,
+        text=text,
+        texttemplate="%{text}",
+        textfont={"size": 11},
+        colorscale=[
+            [0.0,  "#E74C3C"],
+            [0.5,  "#2C2C2C"],
+            [1.0,  "#2ECC71"],
+        ],
+        zmin=-1, zmax=1,
+        hoverongaps=False,
+        hovertemplate="%{y} / %{x}<br>Corrélation : %{z:.2f}<extra></extra>",
+    ))
+    fig.update_layout(
+        **_chart_layout(height=max(350, n * 55)),
+        xaxis=dict(tickangle=-30, side="bottom"),
+        yaxis=dict(autorange="reversed"),
+        margin=dict(l=10, r=10, t=30, b=10),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption(
+        "Corrélation des rendements journaliers sur 1 an. "
+        "Vert = corrélation positive, Rouge = corrélation négative. "
+        "Seuls les actifs avec un ticker Yahoo Finance sont inclus."
+    )
+
+
 def page_analyses():
     st.title("📊 Analyses & Graphiques")
     _set_page_title("Analyses")
@@ -2888,6 +2991,8 @@ def page_analyses():
     _an_render_dca(df_snap, settings)
     st.divider()
     _an_render_dividends(df_txn, df_assets, df_snap)
+    st.divider()
+    _an_render_correlation(df_txn, df_assets)
 
     st.divider()
     if len(df_filtered) >= 2:
