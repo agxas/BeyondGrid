@@ -1,4 +1,4 @@
-# 📊 BeyondGrid — v5.6
+# 📊 BeyondGrid — v5.7
 
 > Dashboard de suivi de portefeuille financier multi-comptes, avec performances ajustées des apports, suivi FIRE et analyse IA mensuelle.
 
@@ -137,6 +137,7 @@ Les assets avec `auto_price = FALSE` ont leur prix mis à jour manuellement depu
 - Comparaison portefeuille vs benchmark (MSCI World, S&P 500…)
 - Projection DCA multi-scénarios (pessimiste / neutre / optimiste) avec valeur réelle (inflation déduite)
 - Analyse des dividendes par asset et par année
+- **Matrice de corrélation** : heatmap Plotly des corrélations de rendements journaliers sur 1 an entre les actifs en position ouverte (actifs avec ticker Yahoo Finance uniquement), cache 1h
 
 ### 📅 Synthèse mensuelle
 - Sélecteur de mois (12 derniers mois disponibles)
