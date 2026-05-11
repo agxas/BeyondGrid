@@ -2115,7 +2115,7 @@ def compute_performance_heatmap(df_snap: pd.DataFrame) -> go.Figure:
             tickvals=list(range(7)), ticktext=DAY_LABELS,
             autorange="reversed", showgrid=False,
         ),
-        plot_bgcolor="white",
+        plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
         hovermode="closest",
     )
@@ -2478,9 +2478,9 @@ def compute_dividends(
     fig_asset.update_layout(
         height=max(180, len(by_asset) * 52),
         margin=dict(l=0, r=90, t=10, b=0),
-        xaxis=dict(ticksuffix=" €", showgrid=True, gridcolor="#f0f0f0"),
+        xaxis=dict(ticksuffix=" €", showgrid=True, gridcolor="#21262D"),
         yaxis=dict(showgrid=False),
-        plot_bgcolor="white",
+        plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
     )
 
@@ -2502,8 +2502,8 @@ def compute_dividends(
         height=280,
         margin=dict(l=0, r=0, t=30, b=0),
         xaxis=dict(showgrid=False),
-        yaxis=dict(ticksuffix=" €", tickformat=",.0f", gridcolor="#f0f0f0"),
-        plot_bgcolor="white",
+        yaxis=dict(ticksuffix=" €", tickformat=",.0f", gridcolor="#21262D"),
+        plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
     )
 
@@ -2790,10 +2790,10 @@ def _an_render_annual_performance(df_snap: pd.DataFrame, perf_idx_full: pd.Serie
     fig_annual.update_layout(
         height=max(180, len(df_chart) * 48),
         margin=dict(l=0, r=70, t=10, b=0),
-        xaxis=dict(ticksuffix=" %", showgrid=True, gridcolor="#f0f0f0",
-                   zeroline=True, zerolinecolor="#cccccc", zerolinewidth=1.5),
+        xaxis=dict(ticksuffix=" %", showgrid=True, gridcolor="#21262D",
+                   zeroline=True, zerolinecolor="#444D56", zerolinewidth=1.5),
         yaxis=dict(showgrid=False),
-        plot_bgcolor="white", paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
     )
     st.plotly_chart(fig_annual, use_container_width=True)
 
