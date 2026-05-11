@@ -2936,9 +2936,14 @@ def _an_render_correlation(df_txn: pd.DataFrame, df_assets: pd.DataFrame) -> Non
         hovertemplate="%{y} / %{x}<br>Corrélation : %{z:.2f}<extra></extra>",
     ))
     fig.update_layout(
-        **_chart_layout(height=max(350, n * 55), t=30),
-        xaxis=dict(tickangle=-30, side="bottom"),
-        yaxis=dict(autorange="reversed"),
+        height=max(350, n * 55),
+        margin=dict(l=0, r=0, t=30, b=0),
+        hovermode="closest",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"color": "#FAFAFA"},
+        xaxis=dict(tickangle=-30, side="bottom", showgrid=False),
+        yaxis=dict(autorange="reversed", showgrid=False),
     )
     st.plotly_chart(fig, use_container_width=True)
     st.caption(
