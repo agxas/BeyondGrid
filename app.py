@@ -169,8 +169,13 @@ hr {
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "5.8"
+APP_VERSION = "6.0"
 PATCH_NOTES = {
+    "6.0": [
+        "Refonte de l'architecture — menu 9 → 7 pages : Saisie manuelle + Transactions fusionnées en 'Gestion', Rééquilibrage PEA déplacé en onglet contextuel dans Vue par compte (visible seulement pour les comptes PEA)",
+        "Score de santé remonté dans Vue Globale (widget compact avec jauge + détail critères), retiré de la page Progression",
+        "Projection DCA déplacée dans Vue Globale après la section FIRE, retirée des Analyses",
+    ],
     "5.8": [
         "Refonte visuelle complète — dark mode minimaliste : palette #0D1117, cartes KPI avec bordure, typographie hiérarchisée, sidebar affinée, graphiques Plotly adaptés au fond sombre, progress bars dégradées, boutons et expanders redessinés",
     ],
@@ -2758,12 +2763,77 @@ def page_vue_globale():
     st.divider()
     _vg_render_fire(fire, kpis, settings, div_data)
     st.divider()
+    _an_render_dca(df_snap, settings)
+    st.divider()
+    _vg_render_health_score(df_snap, df_txn, df_assets, settings, kpis)
+    st.divider()
     _vg_render_portfolio(df_txn, df_assets, div_data)
 
     st.caption(
         f"Dernière donnée : {df_snap.iloc[-1]['date'].strftime('%d/%m/%Y')} "
         f"· {len(df_snap)} snapshots disponibles"
     )
+
+def _vg_render_health_score(
+    df_snap: pd.DataFrame,
+    df_txn: pd.DataFrame,
+    df_assets: pd.DataFrame,
+    settings: dict,
+    kpis: dict,
+) -> None:
+    """Widget score de santé compact pour la Vue Globale."""
+    st.subheader("🩺 Score de santé du portefeuille")
+    health = compute_health_score(df_snap, df_txn, df_assets, settings, kpis)
+
+    col_gauge, col_criteria = st.columns([2, 3])
+    with col_gauge:
+        gauge_fig = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=health["score"],
+            number={"suffix": " / 100", "font": {"size": 28, "color": health["color"]}},
+            gauge={
+                "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": "#555"},
+                "bar":  {"color": health["color"], "thickness": 0.25},
+                "bgcolor": "rgba(0,0,0,0)",
+                "borderwidth": 0,
+                "steps": [
+                    {"range": [0,  40], "color": "rgba(231,76,60,0.15)"},
+                    {"range": [40, 55], "color": "rgba(230,126,34,0.15)"},
+                    {"range": [55, 70], "color": "rgba(241,196,15,0.15)"},
+                    {"range": [70, 85], "color": "rgba(39,174,96,0.15)"},
+                    {"range": [85,100], "color": "rgba(46,204,113,0.15)"},
+                ],
+                "threshold": {
+                    "line": {"color": health["color"], "width": 3},
+                    "thickness": 0.75,
+                    "value": health["score"],
+                },
+            },
+            title={"text": health["label"], "font": {"size": 16}},
+        ))
+        gauge_fig.update_layout(
+            height=220, margin=dict(t=30, b=0, l=20, r=20),
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font={"color": "#E6EDF3"},
+        )
+        st.plotly_chart(gauge_fig, use_container_width=True)
+        if health["fire_not_set"]:
+            st.caption("* Score normalisé sur 90 pts — objectif FIRE non configuré")
+
+    with col_criteria:
+        st.markdown("**Détail des critères**")
+        for c in health["criteria"]:
+            ratio = c["pts"] / c["max"] if c["max"] > 0 else 0
+            bar_color = _health_score_color(round(ratio * 100))
+            filled = int(ratio * 20)
+            bar_str = "█" * filled + "░" * (20 - filled)
+            st.markdown(
+                f"**{c['name']}** — {c['pts']} / {c['max']} pts  \n"
+                f"<span style='color:{bar_color};font-family:monospace'>{bar_str}</span>  "
+                f"<span style='font-size:0.85em;color:#7D8590'>{c['detail']}</span>",
+                unsafe_allow_html=True,
+            )
+
 
 def _an_render_annual_performance(df_snap: pd.DataFrame, perf_idx_full: pd.Series) -> None:
     """Graphe et tableau de performance par année civile."""
@@ -3139,8 +3209,6 @@ def page_analyses():
     st.divider()
     _an_render_comparisons(df_filtered, df_assets, risk_free_rate, _perf_idx_filtered)
     st.divider()
-    _an_render_dca(df_snap, settings)
-    st.divider()
     _an_render_dividends(df_txn, df_assets, df_snap)
     st.divider()
     _an_render_correlation(df_txn, df_assets)
@@ -3309,17 +3377,45 @@ def page_compte():
         st.info("Aucun snapshot pour ce compte — relance un snapshot pour commencer.")
         return
 
-    div_acc     = compute_dividends(df_txn_acc, df_assets)
-    total_value = _pc_render_kpis(df_snap_one, acc_type, div_acc)
-    st.divider()
-    _pc_render_evolution(df_snap_one)
-    st.divider()
-    _pc_render_details(df_txn_acc, df_assets, div_acc, total_value)
+    div_acc = compute_dividends(df_txn_acc, df_assets)
 
-    st.caption(
-        f"Dernière donnée : {df_snap_one.iloc[-1]['date'].strftime('%d/%m/%Y')} "
-        f"· {len(df_snap_one)} snapshot(s)"
-    )
+    if acc_type == "PEA":
+        tab_apercu, tab_rebalance = st.tabs(["📊 Aperçu", "⚖️ Rééquilibrage"])
+    else:
+        tab_apercu = st.container()
+        tab_rebalance = None
+
+    with tab_apercu:
+        total_value = _pc_render_kpis(df_snap_one, acc_type, div_acc)
+        st.divider()
+        _pc_render_evolution(df_snap_one)
+        st.divider()
+        _pc_render_details(df_txn_acc, df_assets, div_acc, total_value)
+        st.caption(
+            f"Dernière donnée : {df_snap_one.iloc[-1]['date'].strftime('%d/%m/%Y')} "
+            f"· {len(df_snap_one)} snapshot(s)"
+        )
+
+    if tab_rebalance is not None:
+        with tab_rebalance:
+            settings    = fetch_settings()
+            dca_amount  = float(settings.get("monthly_dca") or 0)
+            df_positions = compute_pea_positions(df_txn, df_assets, account_id)
+            if df_positions.empty:
+                st.warning("Aucune position trouvée sur ce PEA.")
+            elif dca_amount == 0:
+                st.info("Définis ton DCA mensuel dans **Gestion → Paramètres** pour utiliser cette section.")
+            else:
+                df_pru      = compute_positions_with_pru(df_txn_acc.reset_index(drop=True), df_assets)
+                capital_pea = df_pru["invested"].sum() if not df_pru.empty else 0.0
+                total_pea   = df_positions["value"].sum()
+                st.divider()
+                _rq_render_overview(df_positions, dca_amount, capital_pea)
+                st.divider()
+                targets, total_cible = _rq_render_targets(df_positions, settings, total_pea)
+                st.divider()
+                if abs(total_cible - 100) < 0.1:
+                    _rq_render_orders(df_positions, targets, dca_amount)
 
 
 def _rq_render_overview(
@@ -3835,9 +3931,10 @@ Rédige une analyse en 2-3 paragraphes courts et percutants.
     st.caption(f"Données au {last_date} · {nb_snaps} snapshot(s) ce mois")
 
 
-def page_saisie():
-    st.title("✍️ Saisie manuelle")
-    _set_page_title("Saisie manuelle")
+def page_saisie(standalone: bool = True):
+    if standalone:
+        st.title("✍️ Saisie manuelle")
+        _set_page_title("Saisie manuelle")
 
     try:
         settings    = fetch_settings()
@@ -4644,9 +4741,10 @@ def page_news():
                 st.divider()
 
 
-def page_transactions():
-    st.title("🧾 Historique des transactions")
-    _set_page_title("Transactions")
+def page_transactions(standalone: bool = True):
+    if standalone:
+        st.title("🧾 Historique des transactions")
+        _set_page_title("Transactions")
 
     try:
         df_txn      = fetch_transactions()
@@ -4838,60 +4936,6 @@ def page_progression():
     level      = compute_fire_level(fire_pct)
     streak, best_streak = compute_dca_streak(df_txn, settings)
     monthly_dca = float(settings.get("monthly_dca") or 0)
-    health     = compute_health_score(df_snap, df_txn, df_assets, settings, kpis)
-
-    # ── Score de santé ─────────────────────────────────────
-    st.subheader("🩺 Score de santé du portefeuille")
-    col_gauge, col_criteria = st.columns([2, 3])
-
-    with col_gauge:
-        gauge_fig = go.Figure(go.Indicator(
-            mode="gauge+number",
-            value=health["score"],
-            number={"suffix": " / 100", "font": {"size": 28, "color": health["color"]}},
-            gauge={
-                "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": "#555"},
-                "bar":  {"color": health["color"], "thickness": 0.25},
-                "bgcolor": "rgba(0,0,0,0)",
-                "borderwidth": 0,
-                "steps": [
-                    {"range": [0,  40], "color": "rgba(231,76,60,0.15)"},
-                    {"range": [40, 55], "color": "rgba(230,126,34,0.15)"},
-                    {"range": [55, 70], "color": "rgba(241,196,15,0.15)"},
-                    {"range": [70, 85], "color": "rgba(39,174,96,0.15)"},
-                    {"range": [85,100], "color": "rgba(46,204,113,0.15)"},
-                ],
-                "threshold": {
-                    "line": {"color": health["color"], "width": 3},
-                    "thickness": 0.75,
-                    "value": health["score"],
-                },
-            },
-            title={"text": health["label"], "font": {"size": 16}},
-        ))
-        gauge_fig.update_layout(
-            height=220, margin=dict(t=30, b=0, l=20, r=20),
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-            font={"color": "#FAFAFA"},
-        )
-        st.plotly_chart(gauge_fig, use_container_width=True)
-        if health["fire_not_set"]:
-            st.caption("* Score normalisé sur 90 pts — objectif FIRE non configuré")
-
-    with col_criteria:
-        st.markdown("**Détail des critères**")
-        for c in health["criteria"]:
-            ratio = c["pts"] / c["max"] if c["max"] > 0 else 0
-            bar_color = _health_score_color(round(ratio * 100))
-            filled = int(ratio * 20)
-            bar_str = "█" * filled + "░" * (20 - filled)
-            st.markdown(
-                f"**{c['name']}** — {c['pts']} / {c['max']} pts  \n"
-                f"<span style='color:{bar_color};font-family:monospace'>{bar_str}</span>  "
-                f"<span style='font-size:0.85em;color:#aaa'>{c['detail']}</span>",
-                unsafe_allow_html=True,
-            )
-        st.divider()
 
     # ── Niveau FIRE ────────────────────────────────────────
     st.subheader("🔥 Niveau FIRE")
@@ -5035,6 +5079,16 @@ def page_progression():
 st.sidebar.title("BeyondGrid 📈")
 st.sidebar.caption("Suivi d'investissement")
 
+def page_gestion():
+    st.title("✍️ Gestion")
+    _set_page_title("Gestion")
+    tab_saisie, tab_txn = st.tabs(["✍️ Saisie manuelle", "🧾 Transactions"])
+    with tab_saisie:
+        page_saisie(standalone=False)
+    with tab_txn:
+        page_transactions(standalone=False)
+
+
 # ── Bouton de rafraîchissement manuel ──────────────────────
 if st.sidebar.button("🔄 Actualiser les données", use_container_width=True):
     # Invalidation chirurgicale : uniquement les tables Supabase.
@@ -5073,22 +5127,18 @@ menu = st.sidebar.radio(
         "Vue par compte",
         "Analyses & Graphiques",
         "Synthèse mensuelle",
-        "Rééquilibrage PEA",
         "Progression",
         "Actualités",
-        "Saisie manuelle",
-        "Transactions",
+        "Gestion",
     ],
     format_func=lambda x: {
         "Vue Globale":           "🏠 Vue Globale",
         "Vue par compte":        "🏦 Vue par compte",
         "Analyses & Graphiques": "📊 Analyses",
         "Synthèse mensuelle":    "📅 Synthèse mensuelle",
-        "Rééquilibrage PEA":     "⚖️ Rééquilibrage PEA",
         "Progression":           "🎮 Progression",
         "Actualités":            "📰 Actualités",
-        "Saisie manuelle":       "✍️ Saisie manuelle",
-        "Transactions":          "🧾 Transactions",
+        "Gestion":               "✍️ Gestion",
     }[x],
 )
 
@@ -5100,16 +5150,12 @@ elif menu == "Analyses & Graphiques":
     page_analyses()
 elif menu == "Synthèse mensuelle":
     page_synthese_mensuelle()
-elif menu == "Rééquilibrage PEA":
-    page_reequilibrage()
 elif menu == "Progression":
     page_progression()
 elif menu == "Actualités":
     page_news()
-elif menu == "Saisie manuelle":
-    page_saisie()
-elif menu == "Transactions":
-    page_transactions()
+elif menu == "Gestion":
+    page_gestion()
 
 
 # ── Version en bas de sidebar ──────────────────────────────

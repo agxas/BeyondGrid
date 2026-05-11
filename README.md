@@ -1,4 +1,4 @@
-# 📊 BeyondGrid — v5.7
+# 📊 BeyondGrid — v6.0
 
 > Dashboard de suivi de portefeuille financier multi-comptes, avec performances ajustées des apports, suivi FIRE et analyse IA mensuelle.
 
@@ -125,6 +125,8 @@ Les assets avec `auto_price = FALSE` ont leur prix mis à jour manuellement depu
 - Performances récentes 1M / 3M / 1A / CAGR (nettes des apports)
 - Évolution du patrimoine global et par compte (graphiques interactifs)
 - Objectif FIRE : progression, date estimée, revenu passif (règle des 4 %), jours de liberté financière
+- **Projection DCA** multi-scénarios (pessimiste / neutre / optimiste) avec valeur réelle inflation déduite
+- **Score de santé** du portefeuille : jauge + détail des 5 critères
 - Positions ouvertes avec PRU, plus-value latente et rendement dividendes par ligne
 - Répartition par classe d'actifs et géographie
 - Alerte drawdown sévère (sidebar, visible sur toutes les pages)
@@ -135,7 +137,6 @@ Les assets avec `auto_price = FALSE` ont leur prix mis à jour manuellement depu
 - Drawdown depuis le plus haut historique
 - Comparaison portefeuille vs Livret A
 - Comparaison portefeuille vs benchmark (MSCI World, S&P 500…)
-- Projection DCA multi-scénarios (pessimiste / neutre / optimiste) avec valeur réelle (inflation déduite)
 - Analyse des dividendes par asset et par année
 - **Matrice de corrélation** : heatmap Plotly des corrélations de rendements journaliers sur 1 an entre les actifs en position ouverte (actifs avec ticker Yahoo Finance uniquement), cache 1h
 
@@ -152,12 +153,7 @@ Les assets avec `auto_price = FALSE` ont leur prix mis à jour manuellement depu
 - Barre de progression du plafond PEA (150 k€)
 - Graphique d'évolution avec sélecteur de période
 - Onglets : Positions / Allocation / Dividendes
-
-### ⚖️ Rééquilibrage PEA
-- Visualisation de l'allocation actuelle vs cible
-- Formulaire de saisie des cibles (persisté en base)
-- Calcul automatique des ordres à passer (algorithme greedy)
-- Format adapté Trade Republic (arrondi au multiple de 5 €)
+- **Onglet Rééquilibrage** (comptes PEA uniquement) : allocation actuelle vs cible, calcul des ordres Trade Republic
 
 ### 📰 Actualités
 - Flux RSS des actifs en position ouverte — Yahoo Finance pour les actifs avec ticker, Google News en fallback
@@ -173,17 +169,10 @@ Les assets avec `auto_price = FALSE` ont leur prix mis à jour manuellement depu
 - **Heatmap GitHub-style** : 52 semaines de performance journalière (vert/rouge), survol pour le détail
 - **25 badges** répartis en 6 catégories (Patrimoine, Dividendes, Discipline, Portefeuille, Ancienneté, FIRE) — verrouillés/déverrouillés dynamiquement, barre de complétion globale
 
-### ✍️ Saisie manuelle
-- Paramètres globaux : FIRE, DCA, rendement estimé, inflation, Livret A
-- Clé API Gemini pour l'analyse IA mensuelle (champ sécurisé)
-- Mise à jour des prix manuels avec liens vers les pages de cours
-- Saisie de nouvelles transactions avec aperçu du montant en temps réel
-- Import CSV Trade Republic : achats, ventes et dividendes — correspondance ISIN → asset, aperçu avant import, sélection ligne par ligne, détection des doublons
-
-### 🧾 Transactions
-- Historique filtrable par compte, type, asset et période
-- Résumé des flux (achats, ventes, dividendes, frais)
-- Suppression de transaction avec confirmation
+### ✍️ Gestion
+Deux onglets réunis en une seule page :
+- **Saisie manuelle** : paramètres globaux (FIRE, DCA, rendement, inflation, Livret A), clé API Gemini, mise à jour des prix manuels, saisie de nouvelles transactions, import CSV Trade Republic
+- **Transactions** : historique filtrable par compte / type / asset / période, résumé des flux, suppression avec confirmation
 
 ---
 
