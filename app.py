@@ -33,8 +33,11 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "5.3"
+APP_VERSION = "5.4"
 PATCH_NOTES = {
+    "5.4": [
+        "Suppression de l'indicateur streak DCA de la sidebar",
+    ],
     "5.3": [
         "Nouveau : page Progression — tableau de bord gamifié avec niveaux FIRE, streak DCA, heatmap de performance et 25 badges",
         "Nouveau : Niveaux FIRE — 6 paliers (Épargnant → FIRE atteint) avec barre de progression vers le prochain niveau",
