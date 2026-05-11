@@ -33,11 +33,147 @@ st.set_page_config(
     layout="wide",
 )
 
+st.markdown("""
+<style>
+/* ── Palette ──────────────────────────────────────────────── */
+:root {
+  --bg:        #0D1117;
+  --surface:   #161B22;
+  --border:    #21262D;
+  --accent:    #4C9BE8;
+  --text:      #E6EDF3;
+  --muted:     #7D8590;
+  --success:   #2ECC71;
+  --danger:    #E74C3C;
+  --warning:   #F1C40F;
+}
+
+/* ── Typographie ──────────────────────────────────────────── */
+h1 { font-size: 1.6rem !important; font-weight: 700 !important;
+     letter-spacing: -0.5px; margin-bottom: 0.1rem !important; }
+h2 { font-size: 1.15rem !important; font-weight: 600 !important;
+     color: var(--text) !important; border-left: 3px solid var(--accent);
+     padding-left: 0.6rem; margin: 1.4rem 0 0.7rem 0 !important; }
+h3 { font-size: 1rem !important; font-weight: 600 !important; }
+
+/* ── Sidebar ──────────────────────────────────────────────── */
+[data-testid="stSidebar"] {
+  background: var(--surface) !important;
+  border-right: 1px solid var(--border) !important;
+}
+[data-testid="stSidebar"] .stRadio label {
+  padding: 0.35rem 0.5rem !important;
+  border-radius: 6px !important;
+  transition: background 0.15s;
+}
+[data-testid="stSidebar"] .stRadio label:hover {
+  background: rgba(76,155,232,0.10) !important;
+}
+
+/* ── Cartes KPI (st.metric) ───────────────────────────────── */
+[data-testid="stMetric"] {
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 10px !important;
+  padding: 1rem 1.1rem 0.8rem !important;
+}
+[data-testid="stMetricLabel"] {
+  font-size: 0.75rem !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.06em !important;
+  color: var(--muted) !important;
+}
+[data-testid="stMetricValue"] {
+  font-size: 1.45rem !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.3px !important;
+}
+
+/* ── Expanders ────────────────────────────────────────────── */
+[data-testid="stExpander"] {
+  border: 1px solid var(--border) !important;
+  border-radius: 8px !important;
+  background: var(--surface) !important;
+  margin-bottom: 0.4rem !important;
+}
+[data-testid="stExpander"] summary {
+  font-weight: 500 !important;
+  padding: 0.5rem 0.8rem !important;
+}
+
+/* ── Progress bar ─────────────────────────────────────────── */
+[data-testid="stProgressBar"] > div > div {
+  background: linear-gradient(90deg, var(--accent), #6DD5FA) !important;
+  border-radius: 99px !important;
+}
+[data-testid="stProgressBar"] > div {
+  background: var(--border) !important;
+  border-radius: 99px !important;
+}
+
+/* ── Séparateurs ──────────────────────────────────────────── */
+hr {
+  border: none !important;
+  border-top: 1px solid var(--border) !important;
+  margin: 1rem 0 !important;
+}
+
+/* ── Tableaux ─────────────────────────────────────────────── */
+[data-testid="stDataFrame"] iframe {
+  border-radius: 8px !important;
+}
+
+/* ── Alertes ──────────────────────────────────────────────── */
+[data-testid="stAlert"] {
+  border-radius: 8px !important;
+  border-left-width: 4px !important;
+}
+
+/* ── Boutons ──────────────────────────────────────────────── */
+[data-testid="baseButton-secondary"] {
+  border-radius: 8px !important;
+  border: 1px solid var(--border) !important;
+  background: var(--surface) !important;
+  font-weight: 500 !important;
+  transition: border-color 0.15s, background 0.15s !important;
+}
+[data-testid="baseButton-secondary"]:hover {
+  border-color: var(--accent) !important;
+  background: rgba(76,155,232,0.08) !important;
+}
+
+/* ── Selectbox / inputs ───────────────────────────────────── */
+[data-testid="stSelectbox"] > div,
+[data-testid="stNumberInput"] > div {
+  border-radius: 8px !important;
+}
+
+/* ── Tabs ─────────────────────────────────────────────────── */
+[data-testid="stTabs"] [data-baseweb="tab"] {
+  border-radius: 6px 6px 0 0 !important;
+  font-weight: 500 !important;
+}
+[data-testid="stTabs"] [aria-selected="true"] {
+  border-bottom: 2px solid var(--accent) !important;
+  color: var(--accent) !important;
+}
+
+/* ── Caption ──────────────────────────────────────────────── */
+[data-testid="stCaptionContainer"] {
+  color: var(--muted) !important;
+  font-size: 0.78rem !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "5.7"
+APP_VERSION = "5.8"
 PATCH_NOTES = {
+    "5.8": [
+        "Refonte visuelle complète — dark mode minimaliste : palette #0D1117, cartes KPI avec bordure, typographie hiérarchisée, sidebar affinée, graphiques Plotly adaptés au fond sombre, progress bars dégradées, boutons et expanders redessinés",
+    ],
     "5.7": [
         "Nouveau : matrice de corrélation des rendements journaliers dans Analyses & Graphiques — heatmap Plotly sur 1 an, tous les actifs en position ouverte avec ticker Yahoo Finance, cache 1h",
     ],
@@ -331,11 +467,22 @@ def _chart_layout(
         height=height,
         margin=dict(l=0, r=r, t=t, b=0),
         hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        xaxis=dict(showgrid=False),
-        yaxis=dict(ticksuffix=yaxis_suffix, tickformat=yaxis_format, gridcolor="#f0f0f0"),
-        plot_bgcolor="white",
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+            font=dict(color="#E6EDF3"),
+        ),
+        xaxis=dict(showgrid=False, color="#7D8590", linecolor="#21262D"),
+        yaxis=dict(
+            ticksuffix=yaxis_suffix, tickformat=yaxis_format,
+            gridcolor="#21262D", color="#7D8590",
+        ),
+        plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#E6EDF3"),
+        hoverlabel=dict(
+            bgcolor="#161B22", bordercolor="#21262D",
+            font=dict(color="#E6EDF3"),
+        ),
     )
 
 
