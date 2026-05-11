@@ -1,4 +1,4 @@
-# 📊 BeyondGrid — v5.5
+# 📊 BeyondGrid — v5.6
 
 > Dashboard de suivi de portefeuille financier multi-comptes, avec performances ajustées des apports, suivi FIRE et analyse IA mensuelle.
 
@@ -157,6 +157,13 @@ Les assets avec `auto_price = FALSE` ont leur prix mis à jour manuellement depu
 - Formulaire de saisie des cibles (persisté en base)
 - Calcul automatique des ordres à passer (algorithme greedy)
 - Format adapté Trade Republic (arrondi au multiple de 5 €)
+
+### 📰 Actualités
+- Flux RSS des actifs en position ouverte — Yahoo Finance pour les actifs avec ticker, Google News en fallback
+- Fil chronologique global (20 articles max) avec tag de l'actif, résumé et lien
+- Vue par actif : accordéons dépliables, 5 articles max par position
+- Résumé RSS affiché sous chaque titre (masqué automatiquement s'il est identique ou redondant avec le titre)
+- Cache 30 min — bouton 🔄 Rafraîchir sur la page + invalidation depuis le bouton sidebar
 
 ### 🎮 Progression
 - **Score de santé** : score sur 100 pts calculé sur 5 critères (Diversification, Régularité DCA, Performance CAGR, Risque maîtrisé, Trajectoire FIRE) — jauge Plotly + détail coloré par critère
