@@ -33,8 +33,15 @@ st.set_page_config(
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "5.1"
+APP_VERSION = "5.2"
 PATCH_NOTES = {
+    "5.2": [
+        "Correctif Import TR : colonne 'isin' manquante dans df_preview — l'expander 'ISIN non reconnus' ne s'affichait jamais même quand des ISIN étaient inconnus",
+        "Correctif : docstring _call_gemini corrigé (1.5 Flash → 2.5 Flash)",
+        "Nettoyage : commentaires # ✅ FIX 1/2/3 retirés de compute_accounts_evolution (artefacts de développement)",
+        "Robustesse : ajout de key= explicites sur les 4 filtres de la page Transactions (évite les réinitialisations inattendues lors des reruns)",
+        "Nettoyage : indentation parasite corrigée dans page_transactions (# mapping assets)",
+    ],
     "5.1": [
         "Suppression des sparklines (mini-graphes unicode) dans la section Performance récente — inutilisables après backfill massif",
         "Correctif : libellés type en français dans le tableau d'import TR (Achat/Vente/Dividende)",
@@ -1666,7 +1673,6 @@ def compute_accounts_evolution(df_snap_acc: pd.DataFrame) -> pd.DataFrame:
 
     df = df_snap_acc.copy()
 
-    # ✅ FIX 1 : supprimer comptes nulls
     df = df.dropna(subset=["account_name"])
 
     df_pivot = df.pivot_table(
@@ -1676,10 +1682,8 @@ def compute_accounts_evolution(df_snap_acc: pd.DataFrame) -> pd.DataFrame:
         aggfunc="sum"
     ).sort_index()
 
-    # ✅ FIX 2 : pandas moderne
     df_pivot = df_pivot.ffill()
 
-    # ✅ FIX 3 : éviter colonnes vides
     df_pivot = df_pivot.dropna(axis=1, how="all")
 
     return df_pivot
@@ -1689,7 +1693,7 @@ def compute_accounts_evolution(df_snap_acc: pd.DataFrame) -> pd.DataFrame:
 # ============================================================
 
 def _call_gemini(api_key: str, prompt: str) -> str:
-    """Appel à l'API Gemini 1.5 Flash. Lève une exception en cas d'erreur."""
+    """Appel à l'API Gemini 2.5 Flash. Lève une exception en cas d'erreur."""
     url = (
         "https://generativelanguage.googleapis.com/v1beta"
         f"/models/gemini-2.5-flash:generateContent?key={api_key}"
@@ -3543,6 +3547,7 @@ def page_saisie():
                             "status":      status,
                             "date":        date_str,
                             "type":        TYPE_DISPLAY.get(bg_type, bg_type),
+                            "isin":        isin,
                             "asset":       asset_info["name"] if asset_info else name_tr or isin,
                             "compte":      acc_type,
                             "qté":         qty if qty is not None else "",
@@ -3685,12 +3690,14 @@ def page_transactions():
     account_filter = col1.selectbox(
         "Compte",
         options=["Tous"] + account_names,
+        key="txn_filter_account",
     )
 
     # Type
     type_filter = col2.selectbox(
         "Type",
         options=["Tous"] + sorted(df_txn["type"].unique().tolist()),
+        key="txn_filter_type",
     )
 
     # Asset
@@ -3698,6 +3705,7 @@ def page_transactions():
     asset_filter = col3.selectbox(
         "Asset",
         options=["Tous"] + asset_names_list,
+        key="txn_filter_asset",
     )
 
     # Date range
@@ -3707,6 +3715,7 @@ def page_transactions():
     date_range = col4.date_input(
         "Période",
         value=(date_min, date_max),
+        key="txn_filter_date",
     )
 
     # ── Filtrage ──────────────────────────────────────────────
@@ -3744,7 +3753,7 @@ def page_transactions():
     account_map = df_accounts.set_index("id")["name"].to_dict()
     df_display["account"] = df_display["account_id"].map(account_map)
 
-     # mapping assets
+    # mapping assets
     asset_map = df_assets.set_index("id")["name"].to_dict()
     df_display["asset"] = df_display["asset_id"].map(asset_map)
 
