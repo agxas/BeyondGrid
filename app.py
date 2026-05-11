@@ -2087,7 +2087,7 @@ def compute_health_score(
     else:
         today = pd.Timestamp.today().normalize()
         months_checked = []
-        for i in range(1, 13):
+        for i in range(0, 12):
             m_start = (today - pd.DateOffset(months=i)).replace(day=1)
             m_end   = (m_start + pd.DateOffset(months=1)) - pd.Timedelta(days=1)
             invested = abs(
