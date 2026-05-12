@@ -4618,6 +4618,32 @@ def _fetch_rss(url: str, timeout: int = 6) -> list[dict]:
         return []
 
 
+GENERAL_NEWS_FEEDS = [
+    ("Yahoo Finance — Marchés",   "https://feeds.finance.yahoo.com/rss/2.0/headline?s=^GSPC&region=US&lang=en-US"),
+    ("Yahoo Finance — Crypto",    "https://feeds.finance.yahoo.com/rss/2.0/headline?s=BTC-USD&region=US&lang=en-US"),
+    ("Google News — Finance FR",  "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=fr&gl=FR&ceid=FR:fr"),
+]
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_general_news(n_per_feed: int = 8) -> list[dict]:
+    """Agrège les flux RSS généraux (marchés, crypto, finance FR) et retourne les n_per_feed items les plus récents par source."""
+    all_items = []
+    for source_name, url in GENERAL_NEWS_FEEDS:
+        items = _fetch_rss(url)
+        items.sort(
+            key=lambda x: x["published"] if pd.notna(x["published"]) else pd.Timestamp.min.tz_localize("UTC"),
+            reverse=True,
+        )
+        for item in items[:n_per_feed]:
+            all_items.append({**item, "feed_source": source_name})
+    all_items.sort(
+        key=lambda x: x["published"] if pd.notna(x["published"]) else pd.Timestamp.min.tz_localize("UTC"),
+        reverse=True,
+    )
+    return all_items
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_asset_news(asset_name: str, yahoo_ticker: str | None) -> list[dict]:
     """
@@ -4675,9 +4701,30 @@ def page_news():
     with col_btn:
         if st.button("🔄 Rafraîchir", use_container_width=True):
             fetch_asset_news.clear()
+            fetch_general_news.clear()
             st.rerun()
 
-    # ── Chargement des news (parallèle via cache) ─────────────
+    # ── Actualités générales ───────────────────────────────────
+    st.subheader("🌍 Marchés & Finance")
+    with st.spinner("Chargement des flux généraux…"):
+        general_news = fetch_general_news()
+    if not general_news:
+        st.info("Impossible de récupérer les actualités générales.")
+    else:
+        for item in general_news[:15]:
+            pub_str = item["published"].strftime("%d/%m/%Y %H:%M") if pd.notna(item["published"]) else "—"
+            summary = item.get("summary", "")
+            st.markdown(
+                f"**[{item['title']}]({item['link']})**  \n"
+                + (f"<span style='font-size:0.9em'>{summary}</span>  \n" if _summary_differs_from_title(summary, item["title"]) else "")
+                + f"<span style='font-size:0.82em;color:#7D8590'>{item['feed_source']} · {pub_str}</span>",
+                unsafe_allow_html=True,
+            )
+            st.divider()
+
+    st.subheader("📁 Actualités de votre portefeuille")
+
+    # ── Chargement des news par actif (via cache) ──────────────
     asset_news: dict[int, list[dict]] = {}
     progress_bar = st.progress(0, text="Récupération des flux RSS…")
     total = len(df_open)
@@ -4689,8 +4736,8 @@ def page_news():
         progress_bar.progress((i + 1) / total, text=f"Récupération des flux RSS… {i+1}/{total}")
     progress_bar.empty()
 
-    # ── Vue globale chronologique ──────────────────────────────
-    st.subheader("🕐 Fil d'actualités récentes")
+    # ── Fil portefeuille chronologique ────────────────────────
+    st.subheader("🕐 Fil récent — votre portefeuille")
 
     all_news = []
     for _, row in df_open.iterrows():
