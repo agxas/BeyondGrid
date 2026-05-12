@@ -169,8 +169,11 @@ hr {
 # ============================================================
 # VERSION
 # ============================================================
-APP_VERSION = "6.0"
+APP_VERSION = "6.1"
 PATCH_NOTES = {
+    "6.1": [
+        "Nouveau : section 'Marchés & Finance' en haut de la page Actualités — flux RSS généraux agrégés (Yahoo Finance marchés, Yahoo Finance crypto, Google News Finance FR), 15 articles triés chronologiquement, cache 30 min",
+    ],
     "6.0": [
         "Refonte de l'architecture — menu 9 → 7 pages : Saisie manuelle + Transactions fusionnées en 'Gestion', Rééquilibrage PEA déplacé en onglet contextuel dans Vue par compte (visible seulement pour les comptes PEA)",
         "Score de santé remonté dans Vue Globale (widget compact avec jauge + détail critères), retiré de la page Progression",

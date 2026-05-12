@@ -1,4 +1,4 @@
-# 📊 BeyondGrid — v6.0
+# 📊 BeyondGrid — v6.1
 
 > Dashboard de suivi de portefeuille financier multi-comptes, avec performances ajustées des apports, suivi FIRE et analyse IA mensuelle.
 
@@ -156,6 +156,7 @@ Les assets avec `auto_price = FALSE` ont leur prix mis à jour manuellement depu
 - **Onglet Rééquilibrage** (comptes PEA uniquement) : allocation actuelle vs cible, calcul des ordres Trade Republic
 
 ### 📰 Actualités
+- **Marchés & Finance** : flux RSS généraux agrégés (Yahoo Finance marchés, Yahoo Finance crypto, Google News Finance FR) — 15 articles les plus récents, indépendants du portefeuille
 - Flux RSS des actifs en position ouverte — Yahoo Finance pour les actifs avec ticker, Google News en fallback
 - Fil chronologique global (20 articles max) avec tag de l'actif, résumé et lien
 - Vue par actif : accordéons dépliables, 5 articles max par position
