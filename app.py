@@ -4447,6 +4447,13 @@ def page_saisie(standalone: bool = True):
                             qty = unit_price = None
                             total_amt = fee_amt = 0.0
 
+                        # BeyondGrid convention: buy.total_amount < 0, sell.total_amount > 0
+                        # TR exports SELL with negative amount and sometimes negative shares
+                        if bg_type == "sell":
+                            if qty is not None:
+                                qty = abs(qty)
+                            total_amt = abs(total_amt)
+
                         dup_key = f"{date_str}_{asset_info['id'] if asset_info else '?'}"
                         is_dup  = asset_info is not None and dup_key in existing_keys
 
